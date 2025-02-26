@@ -1,17 +1,14 @@
 import './globals.css';
 import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
-import AuthProvider from '@/components/AuthProvider';
-import {ClerkProvider} from "@clerk/nextjs"; // Import AuthProvider
+import { ClerkProvider } from '@clerk/nextjs'; // ✅ Keep only ClerkProvider
 
-// Load Inter font with specified subsets
 const inter = Inter({
     subsets: ['latin'],
     display: 'swap',
     variable: '--font-inter',
 });
 
-// Metadata for the application
 export const metadata: Metadata = {
     metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'),
     title: 'SubTranslate - AI-Powered Video Subtitle Translation',
@@ -50,20 +47,12 @@ export const metadata: Metadata = {
     manifest: '/site.webmanifest',
 };
 
-export default function RootLayout({
-                                       children,
-                                   }: {
-    children: React.ReactNode;
-}) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
     return (
         <ClerkProvider>
-        <html lang="en" className={inter.variable}>
-        <body>
-        <AuthProvider>
-            {children}
-        </AuthProvider>
-        </body>
-        </html>
+            <html lang="en" className={inter.variable}>
+            <body>{children}</body>
+            </html>
         </ClerkProvider>
     );
 }
