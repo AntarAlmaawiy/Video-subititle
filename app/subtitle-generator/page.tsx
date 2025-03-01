@@ -8,9 +8,14 @@ import Navbar from '@/components/Navbar';
 import Footer from '@/components/Footer';
 import VideoDropzone from '@/components/VideoDropzone';
 import LanguageSelector from '@/components/LanguageSelector';
+import VideoPlayer from '@/components/VideoPlayer';
+import { Loader2 } from 'lucide-react';
 
 type VideoSource = File | string | null;
-type ProcessingState = 'idle' | 'uploading' | 'transcribing' | 'translating' | 'embedding' | 'completed' | 'error';
+type ProcessingState = 'idle' | 'uploading' | 'processing' | 'downloading' | 'completed' | 'error';
+
+// Replace with your standalone API service URL
+const VIDEO_PROCESSING_API = 'http://localhost:3001';
 
 export default function SubtitleGenerator() {
     const { isLoaded, isSignedIn } = useUser();
@@ -24,13 +29,123 @@ export default function SubtitleGenerator() {
     const [processingState, setProcessingState] = useState<ProcessingState>('idle');
     const [errorMessage, setErrorMessage] = useState<string | null>(null);
     const [processedVideoUrl, setProcessedVideoUrl] = useState<string | null>(null);
+    const [originalVideoUrl, setOriginalVideoUrl] = useState<string | null>(null);
     const [srtUrl, setSrtUrl] = useState<string | null>(null);
+    const [transcription, setTranscription] = useState<string | null>(null);
+    const [processingProgress, setProcessingProgress] = useState(0);
 
     useEffect(() => {
         if (isLoaded && !isSignedIn) {
             router.push('/signin');
         }
     }, [isLoaded, isSignedIn, router]);
+
+    // Create an object URL for File type video sources
+    useEffect(() => {
+        if (videoSource instanceof File && sourceType === 'file') {
+            const url = URL.createObjectURL(videoSource);
+            setOriginalVideoUrl(url);
+
+            // Clean up object URL when component unmounts or when source changes
+            return () => {
+                URL.revokeObjectURL(url);
+            };
+        } else if (typeof videoSource === 'string' && sourceType === 'link') {
+            setOriginalVideoUrl(videoSource);
+        }
+    }, [videoSource, sourceType]);
+
+    const handleVideoSelected = (source: File | string, type: 'file' | 'link') => {
+        setVideoSource(source);
+        setSourceType(type);
+        setErrorMessage(null);
+        setProcessedVideoUrl(null);
+        setSrtUrl(null);
+        setTranscription(null);
+        setProcessingState('idle');
+        setProcessingProgress(0);
+    };
+
+    const processVideo = async () => {
+        if (!videoSource) return;
+
+        try {
+            setProcessingState('uploading');
+            setProcessingProgress(10);
+
+            let response;
+
+            if (sourceType === 'file') {
+                // For file uploads
+                const formData = new FormData();
+                formData.append('video', videoSource as File);
+                formData.append('sourceLanguage', sourceLanguage);
+                formData.append('targetLanguage', targetLanguage);
+
+                setProcessingProgress(20);
+                setProcessingState('processing');
+
+                response = await fetch(`${VIDEO_PROCESSING_API}/api/process-video`, {
+                    method: 'POST',
+                    body: formData,
+                });
+
+            } else if (sourceType === 'link' && typeof videoSource === 'string') {
+                // For video links
+                setProcessingProgress(20);
+                setProcessingState('processing');
+
+                response = await fetch(`${VIDEO_PROCESSING_API}/api/process-youtube`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        videoUrl: videoSource,
+                        sourceLanguage,
+                        targetLanguage,
+                    }),
+                });
+            } else {
+                throw new Error('Invalid video source');
+            }
+
+            if (!response.ok) {
+                const responseText = await response.text();
+                console.error("API error response:", responseText);
+                throw new Error(`API Error (${response.status}): ${responseText.substring(0, 100)}...`);
+            }
+
+            setProcessingProgress(80);
+            setProcessingState('downloading');
+
+            const data = await response.json();
+
+            // Update state with processed data
+            setProcessedVideoUrl(data.videoUrl);
+            setSrtUrl(data.srtUrl);
+            setTranscription(data.transcription);
+
+            setProcessingProgress(100);
+            setProcessingState('completed');
+
+        } catch (error: any) {
+            console.error('Processing error:', error);
+            setErrorMessage(error.message || "An unknown error occurred");
+            setProcessingState('error');
+        }
+    };
+    // Function to simulate progress for demo purposes
+    // Remove this in the real implementation
+    useEffect(() => {
+        if (processingState === 'processing' && processingProgress < 75) {
+            const interval = setInterval(() => {
+                setProcessingProgress(prev => Math.min(prev + 1, 75));
+            }, 500);
+
+            return () => clearInterval(interval);
+        }
+    }, [processingState, processingProgress]);
 
     if (!isLoaded || !isSignedIn) {
         return (
@@ -39,14 +154,6 @@ export default function SubtitleGenerator() {
             </div>
         );
     }
-
-    const handleVideoSelected = (source: File | string, type: 'file' | 'link') => {
-        setVideoSource(source);
-        setSourceType(type);
-        setErrorMessage(null);
-        setProcessedVideoUrl(null);
-        setSrtUrl(null);
-    };
 
     return (
         <main>
@@ -73,12 +180,12 @@ export default function SubtitleGenerator() {
                                         </p>
                                     </div>
                                     <div className="aspect-w-16 aspect-h-9">
-                                        <video src={processedVideoUrl} controls className="rounded-lg shadow-lg w-full" />
+                                        <VideoPlayer videoUrl={processedVideoUrl} />
                                     </div>
                                     <div className="flex flex-wrap justify-center gap-4">
                                         <a
                                             href={processedVideoUrl}
-                                            download
+                                            download="video-with-subtitles.mp4"
                                             className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none"
                                         >
                                             Download Video
@@ -86,7 +193,7 @@ export default function SubtitleGenerator() {
                                         {srtUrl && (
                                             <a
                                                 href={srtUrl}
-                                                download
+                                                download="subtitles.srt"
                                                 className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 focus:outline-none"
                                             >
                                                 Download Subtitles
@@ -98,7 +205,10 @@ export default function SubtitleGenerator() {
                                                 setSourceType(null);
                                                 setProcessingState('idle');
                                                 setProcessedVideoUrl(null);
+                                                setOriginalVideoUrl(null);
                                                 setSrtUrl(null);
+                                                setTranscription(null);
+                                                setProcessingProgress(0);
                                             }}
                                             className="inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md shadow-sm text-gray-700 bg-white hover:bg-gray-50 focus:outline-none"
                                         >
@@ -112,6 +222,15 @@ export default function SubtitleGenerator() {
                                         onVideoSelected={handleVideoSelected}
                                         isProcessing={processingState !== 'idle' && processingState !== 'error'}
                                     />
+
+                                    {/* Show original video preview if available */}
+                                    {originalVideoUrl && processingState === 'idle' && (
+                                        <div className="mt-6">
+                                            <h3 className="text-lg font-medium text-gray-900 mb-3">Video Preview</h3>
+                                            <VideoPlayer videoUrl={originalVideoUrl} />
+                                        </div>
+                                    )}
+
                                     <LanguageSelector
                                         sourceLanguage={sourceLanguage}
                                         targetLanguage={targetLanguage}
@@ -119,15 +238,66 @@ export default function SubtitleGenerator() {
                                         onTargetLanguageChange={setTargetLanguage}
                                         disabled={processingState !== 'idle' && processingState !== 'error'}
                                     />
+
                                     <div className="mt-8 flex justify-center">
                                         <button
-                                            onClick={() => {}}
+                                            onClick={processVideo}
                                             disabled={!videoSource || (processingState !== 'idle' && processingState !== 'error')}
                                             className="inline-flex items-center px-6 py-3 border border-transparent text-base font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
                                         >
-                                            Start Processing
+                                            {processingState !== 'idle' && processingState !== 'error' ? (
+                                                <span className="flex items-center">
+                                                    <Loader2 className="animate-spin h-5 w-5 mr-2" />
+                                                    {processingState === 'uploading' && 'Uploading...'}
+                                                    {processingState === 'processing' && 'Processing...'}
+                                                    {processingState === 'downloading' && 'Finalizing...'}
+                                                </span>
+                                            ) : (
+                                                'Start Processing'
+                                            )}
                                         </button>
                                     </div>
+
+                                    {/* Progress bar */}
+                                    {processingState !== 'idle' && processingState !== 'error' && processingState !== 'completed' && (
+                                        <div className="mt-6">
+                                            <div className="relative pt-1">
+                                                <div className="flex mb-2 items-center justify-between">
+                                                    <div>
+                                                        <span className="text-xs font-semibold inline-block py-1 px-2 uppercase rounded-full text-indigo-600 bg-indigo-200">
+                                                            {processingState === 'uploading' ? 'Uploading' :
+                                                                processingState === 'processing' ? 'Processing' : 'Finalizing'}
+                                                        </span>
+                                                    </div>
+                                                    <div className="text-right">
+                                                        <span className="text-xs font-semibold inline-block text-indigo-600">
+                                                            {processingProgress}%
+                                                        </span>
+                                                    </div>
+                                                </div>
+                                                <div className="overflow-hidden h-2 mb-4 text-xs flex rounded bg-indigo-200">
+                                                    <div
+                                                        style={{ width: `${processingProgress}%` }}
+                                                        className="shadow-none flex flex-col text-center whitespace-nowrap text-white justify-center bg-indigo-500 transition-all duration-500"
+                                                    ></div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* Show processing video if available */}
+                                    {originalVideoUrl && processingState !== 'idle' && processingState !== 'error' && processingState !== 'completed' && (
+                                        <div className="mt-8">
+                                            <div className="text-center mb-4">
+                                                <h3 className="text-lg font-medium text-gray-900">Processing Your Video</h3>
+                                                <p className="text-sm text-gray-500">
+                                                    Please wait while we process your video. This may take a few minutes.
+                                                </p>
+                                            </div>
+                                            <VideoPlayer videoUrl={originalVideoUrl} />
+                                        </div>
+                                    )}
+
                                     {errorMessage && (
                                         <div className="mt-4 text-center text-red-600">
                                             {errorMessage}

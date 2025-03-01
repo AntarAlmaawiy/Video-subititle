@@ -12,13 +12,13 @@ const inter = Inter({
 export const metadata: Metadata = {
     metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'),
     title: 'SubTranslate - AI-Powered Video Subtitle Translation',
-    description: 'Automatically transcribe, translate, and embed subtitles in your videos with our AI-powered tool.',
+    description: 'Automatically transcribe-audio, translate, and embed subtitles in your videos with our AI-powered tool.',
     keywords: 'video, subtitles, translation, AI, transcription, video processing',
     authors: [{ name: 'SubTranslate Team' }],
     category: 'Technology',
     openGraph: {
         title: 'SubTranslate - AI-Powered Video Subtitle Translation',
-        description: 'Automatically transcribe, translate, and embed subtitles in your videos with our AI-powered tool.',
+        description: 'Automatically transcribe-audio, translate, and embed subtitles in your videos with our AI-powered tool.',
         url: '/',
         siteName: 'SubTranslate',
         images: [
@@ -35,7 +35,7 @@ export const metadata: Metadata = {
     twitter: {
         card: 'summary_large_image',
         title: 'SubTranslate - AI-Powered Video Subtitle Translation',
-        description: 'Automatically transcribe, translate, and embed subtitles in your videos with our AI-powered tool.',
+        description: 'Automatically transcribe-audio, translate, and embed subtitles in your videos with our AI-powered tool.',
         images: ['/images/twitter-image.jpg'],
         creator: '@subtranslate',
     },

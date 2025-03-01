@@ -3,6 +3,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { translateText } from '@/lib/ai/openai';
 
+export const config = {
+    api: {
+        bodyParser: false,
+        responseLimit: '100mb',
+    },
+};
+
 export async function POST(request: NextRequest) {
     try {
         const { text, sourceLanguage, targetLanguage } = await request.json();

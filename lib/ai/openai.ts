@@ -6,7 +6,7 @@ export const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY,
 });
 
-// Function to transcribe audio using Whisper API
+// Function to transcribe-audio audio using Whisper API
 export async function transcribeAudio(audioBuffer: ArrayBuffer, language: string = 'auto') {
     try {
         const file = new Blob([audioBuffer], { type: 'audio/mp3' });
@@ -24,7 +24,7 @@ export async function transcribeAudio(audioBuffer: ArrayBuffer, language: string
         return response;
     } catch (error) {
         console.error('Transcription error:', error);
-        throw new Error('Failed to transcribe audio');
+        throw new Error('Failed to transcribe-audio audio');
     }
 }
 

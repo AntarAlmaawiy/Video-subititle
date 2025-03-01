@@ -1,3 +1,4 @@
+// next.config.ts
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
@@ -10,7 +11,7 @@ const nextConfig: NextConfig = {
     api: {
         // Increase body parser size limit for video uploads
         bodyParser: {
-            sizeLimit: '50mb',
+            sizeLimit: '100mb',
         },
         // Increase response limit for processed videos
         responseLimit: false,
@@ -20,6 +21,10 @@ const nextConfig: NextConfig = {
     experimental: {
         // Allow larger server response size for videos
         largePageDataBytes: 128 * 1024 * 1024,
+        // Add this new config for App Router server actions
+        serverActions: {
+            bodySizeLimit: '100mb', // THIS IS THE CRITICAL PART FOR YOUR ERROR
+        },
     },
 
     // Configure headers to allow CORS and FFmpeg WASM headers

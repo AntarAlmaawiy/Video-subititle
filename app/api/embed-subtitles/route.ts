@@ -3,6 +3,13 @@ import { NextRequest, NextResponse } from 'next/server';
 import { processVideoWithSubtitles } from '@/lib/video-processing/subtitle-embedder';
 import crypto from 'crypto';
 
+export const config = {
+    api: {
+        bodyParser: false,
+        responseLimit: '100mb',
+    },
+};
+
 export async function POST(request: NextRequest) {
     try {
         // Get FormData from request
@@ -48,9 +55,3 @@ export async function POST(request: NextRequest) {
     }
 }
 
-export const config = {
-    api: {
-        bodyParser: false,
-        responseLimit: '100mb',
-    },
-};
