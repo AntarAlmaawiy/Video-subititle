@@ -129,12 +129,19 @@ export default function SubtitleGenerator() {
             setProcessingProgress(100);
             setProcessingState('completed');
 
-        } catch (error: any) {
+        } // In app/subtitle-generator/page.tsx, add to the catch block in processVideo:
+
+        catch (error: any) {
             console.error('Processing error:', error);
-            setErrorMessage(error.message || "An unknown error occurred");
+            if (error.message && error.message.includes('YouTube')) {
+                setErrorMessage("YouTube video processing is currently unavailable. Please download the video manually and upload it as a file instead.");
+            } else {
+                setErrorMessage(error.message || "An unknown error occurred");
+            }
             setProcessingState('error');
         }
     };
+
     // Function to simulate progress for demo purposes
     // Remove this in the real implementation
     useEffect(() => {
@@ -190,6 +197,7 @@ export default function SubtitleGenerator() {
                                         >
                                             Download Video
                                         </a>
+
                                         {srtUrl && (
                                             <a
                                                 href={srtUrl}
@@ -199,6 +207,7 @@ export default function SubtitleGenerator() {
                                                 Download Subtitles
                                             </a>
                                         )}
+
                                         <button
                                             onClick={() => {
                                                 setVideoSource(null);
@@ -215,101 +224,102 @@ export default function SubtitleGenerator() {
                                             Process Another Video
                                         </button>
                                     </div>
+
                                 </div>
-                            ) : (
+                                ) : (
                                 <>
-                                    <VideoDropzone
-                                        onVideoSelected={handleVideoSelected}
-                                        isProcessing={processingState !== 'idle' && processingState !== 'error'}
-                                    />
+                                <VideoDropzone
+                                onVideoSelected={handleVideoSelected}
+                             isProcessing={processingState !== 'idle' && processingState !== 'error'}
+                        />
 
-                                    {/* Show original video preview if available */}
-                                    {originalVideoUrl && processingState === 'idle' && (
-                                        <div className="mt-6">
-                                            <h3 className="text-lg font-medium text-gray-900 mb-3">Video Preview</h3>
-                                            <VideoPlayer videoUrl={originalVideoUrl} />
-                                        </div>
-                                    )}
+                        {/* Show original video preview if available */}
+                        {originalVideoUrl && processingState === 'idle' && (
+                            <div className="mt-6">
+                                <h3 className="text-lg font-medium text-gray-900 mb-3">Video Preview</h3>
+                                <VideoPlayer videoUrl={originalVideoUrl} />
+                            </div>
+                        )}
 
-                                    <LanguageSelector
-                                        sourceLanguage={sourceLanguage}
-                                        targetLanguage={targetLanguage}
-                                        onSourceLanguageChange={setSourceLanguage}
-                                        onTargetLanguageChange={setTargetLanguage}
-                                        disabled={processingState !== 'idle' && processingState !== 'error'}
-                                    />
+                        <LanguageSelector
+                            sourceLanguage={sourceLanguage}
+                            targetLanguage={targetLanguage}
+                            onSourceLanguageChange={setSourceLanguage}
+                            onTargetLanguageChange={setTargetLanguage}
+                            disabled={processingState !== 'idle' && processingState !== 'error'}
+                        />
 
-                                    <div className="mt-8 flex justify-center">
-                                        <button
-                                            onClick={processVideo}
-                                            disabled={!videoSource || (processingState !== 'idle' && processingState !== 'error')}
-                                            className="inline-flex items-center px-6 py-3 border border-transparent text-base font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
-                                        >
-                                            {processingState !== 'idle' && processingState !== 'error' ? (
-                                                <span className="flex items-center">
+                        <div className="mt-8 flex justify-center">
+                            <button
+                                onClick={processVideo}
+                                disabled={!videoSource || (processingState !== 'idle' && processingState !== 'error')}
+                                className="inline-flex items-center px-6 py-3 border border-transparent text-base font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                                {processingState !== 'idle' && processingState !== 'error' ? (
+                                    <span className="flex items-center">
                                                     <Loader2 className="animate-spin h-5 w-5 mr-2" />
-                                                    {processingState === 'uploading' && 'Uploading...'}
-                                                    {processingState === 'processing' && 'Processing...'}
-                                                    {processingState === 'downloading' && 'Finalizing...'}
+                                        {processingState === 'uploading' && 'Uploading...'}
+                                        {processingState === 'processing' && 'Processing...'}
+                                        {processingState === 'downloading' && 'Finalizing...'}
                                                 </span>
-                                            ) : (
-                                                'Start Processing'
-                                            )}
-                                        </button>
-                                    </div>
+                                ) : (
+                                    'Start Processing'
+                                )}
+                            </button>
+                        </div>
 
-                                    {/* Progress bar */}
-                                    {processingState !== 'idle' && processingState !== 'error' && processingState !== 'completed' && (
-                                        <div className="mt-6">
-                                            <div className="relative pt-1">
-                                                <div className="flex mb-2 items-center justify-between">
-                                                    <div>
+                        {/* Progress bar */}
+                        {processingState !== 'idle' && processingState !== 'error' && processingState !== 'completed' && (
+                            <div className="mt-6">
+                                <div className="relative pt-1">
+                                    <div className="flex mb-2 items-center justify-between">
+                                        <div>
                                                         <span className="text-xs font-semibold inline-block py-1 px-2 uppercase rounded-full text-indigo-600 bg-indigo-200">
                                                             {processingState === 'uploading' ? 'Uploading' :
                                                                 processingState === 'processing' ? 'Processing' : 'Finalizing'}
                                                         </span>
-                                                    </div>
-                                                    <div className="text-right">
+                                        </div>
+                                        <div className="text-right">
                                                         <span className="text-xs font-semibold inline-block text-indigo-600">
                                                             {processingProgress}%
                                                         </span>
-                                                    </div>
-                                                </div>
-                                                <div className="overflow-hidden h-2 mb-4 text-xs flex rounded bg-indigo-200">
-                                                    <div
-                                                        style={{ width: `${processingProgress}%` }}
-                                                        className="shadow-none flex flex-col text-center whitespace-nowrap text-white justify-center bg-indigo-500 transition-all duration-500"
-                                                    ></div>
-                                                </div>
-                                            </div>
                                         </div>
-                                    )}
+                                    </div>
+                                    <div className="overflow-hidden h-2 mb-4 text-xs flex rounded bg-indigo-200">
+                                        <div
+                                            style={{ width: `${processingProgress}%` }}
+                                            className="shadow-none flex flex-col text-center whitespace-nowrap text-white justify-center bg-indigo-500 transition-all duration-500"
+                                        ></div>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
 
-                                    {/* Show processing video if available */}
-                                    {originalVideoUrl && processingState !== 'idle' && processingState !== 'error' && processingState !== 'completed' && (
-                                        <div className="mt-8">
-                                            <div className="text-center mb-4">
-                                                <h3 className="text-lg font-medium text-gray-900">Processing Your Video</h3>
-                                                <p className="text-sm text-gray-500">
-                                                    Please wait while we process your video. This may take a few minutes.
-                                                </p>
-                                            </div>
-                                            <VideoPlayer videoUrl={originalVideoUrl} />
-                                        </div>
-                                    )}
+                        {/* Show processing video if available */}
+                        {originalVideoUrl && processingState !== 'idle' && processingState !== 'error' && processingState !== 'completed' && (
+                            <div className="mt-8">
+                                <div className="text-center mb-4">
+                                    <h3 className="text-lg font-medium text-gray-900">Processing Your Video</h3>
+                                    <p className="text-sm text-gray-500">
+                                        Please wait while we process your video. This may take a few minutes.
+                                    </p>
+                                </div>
+                                <VideoPlayer videoUrl={originalVideoUrl} />
+                            </div>
+                        )}
 
-                                    {errorMessage && (
-                                        <div className="mt-4 text-center text-red-600">
-                                            {errorMessage}
-                                        </div>
-                                    )}
-                                </>
-                            )}
-                        </div>
-                    </div>
+                        {errorMessage && (
+                            <div className="mt-4 text-center text-red-600">
+                                {errorMessage}
+                            </div>
+                        )}
+                    </>
+                    )}
                 </div>
             </div>
-            <Footer />
-        </main>
-    );
+        </div>
+</div>
+    <Footer />
+</main>
+);
 }
