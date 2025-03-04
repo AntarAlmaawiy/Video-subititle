@@ -51,7 +51,7 @@ export default function ManagePlanPage() {
                 { name: 'Standard AI translation quality', included: true },
                 { name: 'Email support', included: true },
                 { name: 'Batch processing', included: false },
-                { name: 'Analytics dashboard', included: false },
+                { name: 'Analytics (dashboard)', included: false },
                 { name: 'Premium AI models', included: false },
             ]
         },
@@ -67,7 +67,7 @@ export default function ManagePlanPage() {
                 { name: 'Enhanced AI translation quality', included: true },
                 { name: 'Email support', included: true },
                 { name: 'Batch processing', included: false },
-                { name: 'Analytics dashboard', included: false },
+                { name: 'Analytics (dashboard)', included: false },
                 { name: 'Premium AI models', included: true },
             ]
         },
@@ -83,7 +83,7 @@ export default function ManagePlanPage() {
                 { name: 'Premium AI translation quality', included: true },
                 { name: 'Email support', included: true },
                 { name: 'Batch processing', included: true },
-                { name: 'Analytics dashboard', included: true },
+                { name: 'Analytics (dashboard)', included: true },
                 { name: 'Premium AI models', included: true },
             ],
             recommended: true
@@ -100,7 +100,7 @@ export default function ManagePlanPage() {
                 { name: 'Premium+ AI translation quality', included: true },
                 { name: 'Priority support', included: true },
                 { name: 'Batch processing', included: true },
-                { name: 'Analytics dashboard', included: true },
+                { name: 'Analytics (dashboard)', included: true },
                 { name: 'Premium AI models', included: true },
             ]
         },
