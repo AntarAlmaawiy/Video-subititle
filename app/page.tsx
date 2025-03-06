@@ -1,9 +1,8 @@
-// app/page.tsx (Home page)
 'use client';
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { useUser } from '@clerk/nextjs';
+import { useSession } from 'next-auth/react';
 import Navbar from '@/components/Navbar';
 import Hero from '@/components/Hero';
 import Features from '@/components/Features';
@@ -14,7 +13,8 @@ import ProcessingStatus from "@/components/ProcessingStatus";
 
 export default function Home() {
     const router = useRouter();
-    const { isSignedIn } = useUser();
+    const { data: session, status } = useSession();
+    const isSignedIn = status === 'authenticated';
     const [hasUsedBefore, setHasUsedBefore] = useState(false);
 
     // Check localStorage on component mount

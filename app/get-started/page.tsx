@@ -1,13 +1,15 @@
 // app/get-started/page.tsx
 'use client';
 
-import { useUser } from '@clerk/nextjs';
+import { useSession } from 'next-auth/react';
 import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Loading from '@/app/Loading';
 
 export default function GetStarted() {
-    const { isLoaded, isSignedIn } = useUser();
+    const { data: session, status } = useSession();
+    const isLoaded = status !== 'loading';
+    const isSignedIn = status === 'authenticated';
     const router = useRouter();
 
     useEffect(() => {
@@ -15,7 +17,7 @@ export default function GetStarted() {
             if (isSignedIn) {
                 router.push('/subtitle-generator');
             } else {
-                router.push('/signin');
+                router.push('/signin?callbackUrl=/subtitle-generator');
             }
         }
     }, [isLoaded, isSignedIn, router]);

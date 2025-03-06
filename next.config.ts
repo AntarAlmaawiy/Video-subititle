@@ -7,6 +7,11 @@ const nextConfig: NextConfig = {
         OPENAI_API_KEY: process.env.OPENAI_API_KEY,
     },
 
+    // Add the images configuration here
+    images: {
+        domains: ['lh3.googleusercontent.com'],
+    },
+
     // Configure API routes
     api: {
         // Increase body parser size limit for video uploads

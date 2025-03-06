@@ -1,7 +1,7 @@
 import './globals.css';
 import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
-import { ClerkProvider } from '@clerk/nextjs'; // ✅ Keep only ClerkProvider
+import { SessionProvider } from '@/components/SessionProvider';
 
 const inter = Inter({
     subsets: ['latin'],
@@ -49,10 +49,10 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
     return (
-        <ClerkProvider>
-            <html lang="en" className={inter.variable}>
-            <body>{children}</body>
-            </html>
-        </ClerkProvider>
+        <html lang="en" className={inter.variable}>
+        <body>
+        <SessionProvider>{children}</SessionProvider>
+        </body>
+        </html>
     );
 }

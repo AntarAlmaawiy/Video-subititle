@@ -2,8 +2,12 @@
 import { ArrowRight } from 'lucide-react';
 import Link from 'next/link';
 import Image from 'next/image';
+import { useSession } from 'next-auth/react';
 
 const Hero = () => {
+    const { data: session, status } = useSession();
+    const isAuthenticated = status === 'authenticated';
+
     return (
         <div className="relative bg-white overflow-hidden">
             <div className="max-w-7xl mx-auto">
@@ -31,7 +35,7 @@ const Hero = () => {
                             <div className="mt-5 sm:mt-8 sm:flex sm:justify-center lg:justify-start">
                                 <div className="rounded-md shadow">
                                     <Link
-                                        href="/subtitle-generator"
+                                        href={isAuthenticated ? "/subtitle-generator" : "/get-started"}
                                         className="w-full flex items-center justify-center px-8 py-3 border border-transparent text-base font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 md:py-4 md:text-lg md:px-10"
                                     >
                                         Get Started
