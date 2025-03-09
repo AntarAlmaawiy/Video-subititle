@@ -1,22 +1,144 @@
+// app/signin/page.tsx
 "use client";
 
 import { signIn } from "next-auth/react";
-import { useSearchParams } from "next/navigation";
+import { useSearchParams, useRouter } from "next/navigation";
 import { useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
+import { supabase } from "@/lib/supabase";
 
 export default function SignInPage() {
+    const router = useRouter();
     const searchParams = useSearchParams();
-    const callbackUrl = searchParams.get("callbackUrl") || "/subtitle-generator";
+    const callbackUrl = searchParams.get("callbackUrl") || "/dashboard";
     const [loading, setLoading] = useState<{
         github?: boolean;
         google?: boolean;
+        credentials?: boolean;
+        direct?: boolean;
     }>({});
+    const [formData, setFormData] = useState({
+        email: "",
+        password: "",
+    });
+    const [error, setError] = useState("");
+    const [debug, setDebug] = useState("");
 
-    const handleSignIn = async (provider: "github" | "google") => {
+    const handleOAuthSignIn = async (provider: "github" | "google") => {
         setLoading({ ...loading, [provider]: true });
         await signIn(provider, { callbackUrl });
+    };
+
+    const handleCredentialsSignIn = async (e: React.FormEvent) => {
+        e.preventDefault();
+        setError("");
+        setDebug("");
+        setLoading({ ...loading, credentials: true });
+
+        try {
+            // Check for valid inputs
+            if (!formData.email || !formData.password) {
+                setError("Email and password are required");
+                setLoading({ ...loading, credentials: false });
+                return;
+            }
+
+            console.log("Attempting to sign in with credentials:", formData.email);
+
+            // First check if the user exists and is confirmed in Supabase
+            const { data: userData, error: userError } = await supabase.auth.signInWithPassword({
+                email: formData.email,
+                password: formData.password,
+            });
+
+            if (userError) {
+                console.error("Supabase auth error:", userError);
+                setError(userError.message);
+                setDebug(`Supabase error: ${userError.message}`);
+                setLoading({ ...loading, credentials: false });
+                return;
+            }
+
+            // If we got here, Supabase authentication works!
+            setDebug(`Supabase authentication successful for: ${userData.user?.email}`);
+
+            // Now try NextAuth login
+            const result = await signIn("credentials", {
+                redirect: false,
+                email: formData.email,
+                password: formData.password,
+            });
+
+            console.log("NextAuth sign in result:", result);
+
+            if (result?.error) {
+                setError("NextAuth error: " + result.error);
+                setDebug(prev => `${prev}\nNextAuth error: ${result.error}`);
+
+                // If NextAuth failed but Supabase worked, we have a configuration issue
+                if (userData?.user) {
+                    setDebug(prev => prev + "\n\nNote: Direct Supabase auth works but NextAuth integration failed. This suggests a configuration issue in your NextAuth setup.");
+                }
+
+                setLoading({ ...loading, credentials: false });
+                return;
+            }
+
+            // Success!
+            setDebug(prev => `${prev}\nNextAuth authentication successful!`);
+            router.push(callbackUrl);
+        } catch (error: any) {
+            console.error("Sign in error:", error);
+            setError("An error occurred during sign in");
+            setDebug(`Error: ${error.message}`);
+            setLoading({ ...loading, credentials: false });
+        }
+    };
+
+    // Direct Supabase sign-in for testing/debugging
+    const handleDirectSignIn = async (e: React.MouseEvent) => {
+        e.preventDefault();
+        setError("");
+        setDebug("");
+        setLoading({ ...loading, direct: true });
+
+        try {
+            console.log("Attempting direct Supabase sign in with:", formData.email);
+
+            const { data, error } = await supabase.auth.signInWithPassword({
+                email: formData.email,
+                password: formData.password,
+            });
+
+            console.log("Direct Supabase sign in result:", { data, error });
+
+            if (error) {
+                setError(`Direct Supabase sign in failed: ${error.message}`);
+                setDebug(JSON.stringify(error, null, 2));
+                setLoading({ ...loading, direct: false });
+                return;
+            }
+
+            setDebug(`Direct Supabase sign in successful!\nUser: ${data.user?.email}\nID: ${data.user?.id}`);
+            setError("");
+            setLoading({ ...loading, direct: false });
+
+            // If direct sign-in worked, show a message that NextAuth should work now too
+            if (data.user) {
+                setDebug(prev => prev + "\n\nDirect Supabase sign-in was successful! Try the regular Sign In button again - it should work now.");
+            }
+        } catch (error: any) {
+            console.error("Direct Supabase sign in error:", error);
+            setError("An error occurred during direct sign in");
+            setDebug(`Exception: ${error.message}`);
+            setLoading({ ...loading, direct: false });
+        }
+    };
+
+    const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const { name, value } = e.target;
+        setFormData(prev => ({ ...prev, [name]: value }));
     };
 
     return (
@@ -39,11 +161,90 @@ export default function SignInPage() {
                         Access your subtitle generator dashboard
                     </p>
                 </div>
-                <div className="mt-8 space-y-4">
+
+                {/* Email/Password form */}
+                <form className="mt-8 space-y-6" onSubmit={handleCredentialsSignIn}>
+                    <div className="space-y-4">
+                        <div>
+                            <label htmlFor="email" className="sr-only">
+                                Email address
+                            </label>
+                            <input
+                                id="email"
+                                name="email"
+                                type="email"
+                                autoComplete="email"
+                                required
+                                className="relative block w-full rounded-md border-0 p-2.5 text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 placeholder:text-gray-400 focus:ring-2 focus:ring-inset focus:ring-indigo-600 sm:text-sm"
+                                placeholder="Email address"
+                                value={formData.email}
+                                onChange={handleInputChange}
+                            />
+                        </div>
+                        <div>
+                            <label htmlFor="password" className="sr-only">
+                                Password
+                            </label>
+                            <input
+                                id="password"
+                                name="password"
+                                type="password"
+                                autoComplete="current-password"
+                                required
+                                className="relative block w-full rounded-md border-0 p-2.5 text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 placeholder:text-gray-400 focus:ring-2 focus:ring-inset focus:ring-indigo-600 sm:text-sm"
+                                placeholder="Password"
+                                value={formData.password}
+                                onChange={handleInputChange}
+                            />
+                        </div>
+                    </div>
+
+                    {error && (
+                        <div className="text-red-500 text-sm text-center">{error}</div>
+                    )}
+
+                    <div>
+                        <button
+                            type="submit"
+                            className="group relative flex w-full justify-center rounded-md bg-indigo-600 py-2.5 px-3 text-sm font-semibold text-white hover:bg-indigo-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600"
+                            disabled={loading.credentials}
+                        >
+                            {loading.credentials ? "Signing in..." : "Sign in"}
+                        </button>
+                    </div>
+                </form>
+
+                {/* Debug button */}
+                <div className="text-center">
+                    <button
+                        type="button"
+                        onClick={handleDirectSignIn}
+                        className="text-xs text-gray-500 underline"
+                    >
+                        Test Direct Supabase Sign In
+                    </button>
+                    {debug && (
+                        <div className="mt-2 p-2 bg-gray-100 text-xs text-left whitespace-pre-wrap rounded">
+                            {debug}
+                        </div>
+                    )}
+                </div>
+
+                <div className="mt-6 relative">
+                    <div className="absolute inset-0 flex items-center">
+                        <div className="w-full border-t border-gray-300" />
+                    </div>
+                    <div className="relative flex justify-center text-sm">
+                        <span className="px-2 bg-gray-50 text-gray-500">Or continue with</span>
+                    </div>
+                </div>
+
+                <div className="mt-6 space-y-4">
                     <button
                         className="w-full flex justify-center items-center py-3 px-4 border border-gray-300 rounded-md shadow-sm bg-white text-sm font-medium text-gray-700 hover:bg-gray-50"
-                        onClick={() => handleSignIn("github")}
+                        onClick={() => handleOAuthSignIn("github")}
                         disabled={loading.github}
+                        type="button"
                     >
                         {loading.github ? (
                             "Signing in..."
@@ -59,8 +260,9 @@ export default function SignInPage() {
 
                     <button
                         className="w-full flex justify-center items-center py-3 px-4 border border-gray-300 rounded-md shadow-sm bg-white text-sm font-medium text-gray-700 hover:bg-gray-50"
-                        onClick={() => handleSignIn("google")}
+                        onClick={() => handleOAuthSignIn("google")}
                         disabled={loading.google}
+                        type="button"
                     >
                         {loading.google ? (
                             "Signing in..."
