@@ -3,9 +3,11 @@
 
 import React, { useEffect, useState } from 'react';
 import { useSession } from 'next-auth/react';
-import { getUserVideos, deleteUserVideo, forceDownloadFile } from '@/lib/supabase';
+import { getUserVideos, deleteUserVideo, forceDownloadFile, getUserSubscription, canUploadMoreVideos } from '@/lib/supabase';
 import Link from 'next/link';
 import VideoPlayer from "@/components/VideoPlayer";
+import { Loader2, Plus, Crown, Clock, AlertCircle } from 'lucide-react';
+import { formatDistanceToNow } from 'date-fns';
 
 interface Video {
     id: string;
@@ -18,6 +20,14 @@ interface Video {
     publicUrl: string;
 }
 
+interface UploadLimits {
+    canUpload: boolean;
+    currentCount: number;
+    limit: number;
+    remaining: number;
+    nextUploadTime?: Date;
+}
+
 export default function VideoLibraryPage() {
     const { data: session } = useSession();
     const [videos, setVideos] = useState<Video[]>([]);
@@ -25,39 +35,120 @@ export default function VideoLibraryPage() {
     const [error, setError] = useState<string | null>(null);
     const [selectedVideo, setSelectedVideo] = useState<Video | null>(null);
     const [isDownloading, setIsDownloading] = useState(false);
+    const [isDeleting, setIsDeleting] = useState(false);
+    const [currentPlan, setCurrentPlan] = useState('free');
+    const [uploadLimits, setUploadLimits] = useState<UploadLimits>({
+        canUpload: true,
+        currentCount: 0,
+        limit: 1,
+        remaining: 1
+    });
+    const [timeRemaining, setTimeRemaining] = useState<string>('');
 
     useEffect(() => {
-        const fetchVideos = async () => {
+        const fetchData = async () => {
             if (!session?.user?.id) return;
 
             try {
                 setLoading(true);
+                console.log("Fetching user videos and plan data...");
+
+                // Get videos first - critical for the page
                 const userVideos = await getUserVideos(session.user.id);
-                setVideos(userVideos);
+                console.log(`Retrieved ${userVideos.length} videos`);
+
+                // Make sure we have valid data
+                const validVideos = userVideos.filter(video =>
+                    video && video.id && video.file_path && video.publicUrl
+                );
+
+                console.log(`Valid videos: ${validVideos.length}`);
+                setVideos(validVideos);
+
+                // Auto-select the first video if available
+                if (validVideos.length > 0 && !selectedVideo) {
+                    console.log(`Auto-selecting first video: ${validVideos[0].file_name}`);
+                    setSelectedVideo(validVideos[0]);
+                }
+
+                // Now get the plan information - less critical for immediate display
+                try {
+                    // Get user's subscription
+                    const subscription = await getUserSubscription(session.user.id);
+                    setCurrentPlan(subscription.plan_id);
+
+                    // Get upload limits
+                    const limits = await canUploadMoreVideos(session.user.id);
+                    setUploadLimits(limits);
+
+                    // Calculate time remaining
+                    if (limits.nextUploadTime) {
+                        updateRemainingTime(limits.nextUploadTime);
+
+                        // Update timer every minute
+                        const timerInterval = setInterval(() => {
+                            if (limits.nextUploadTime) {
+                                const stillValid = updateRemainingTime(limits.nextUploadTime);
+                                if (!stillValid) clearInterval(timerInterval);
+                            }
+                        }, 60000);
+
+                        return () => clearInterval(timerInterval);
+                    }
+                } catch (planError) {
+                    console.error("Error loading plan information:", planError);
+                    // This error is non-critical, we still have videos
+                }
+
             } catch (err: any) {
                 console.error('Error fetching videos:', err);
-                setError(err.message || 'Failed to load your videos');
+                const errorMessage = err instanceof Error ? err.message : 'Failed to load your videos';
+                setError(errorMessage);
+
+                // Even if there's an error, we might still have partial data
+                if (videos.length > 0 && !selectedVideo) {
+                    setSelectedVideo(videos[0]);
+                }
             } finally {
                 setLoading(false);
             }
         };
 
-        fetchVideos();
+        fetchData();
     }, [session?.user?.id]);
+
+    // Update the remaining time display and return if timer is still valid
+    const updateRemainingTime = (nextTime: Date): boolean => {
+        const now = new Date();
+        if (now >= nextTime) {
+            setTimeRemaining('');
+            return false;
+        }
+
+        setTimeRemaining(formatDistanceToNow(nextTime, { addSuffix: true }));
+        return true;
+    };
 
     const handleDeleteVideo = async (video: Video) => {
         if (!session?.user?.id) return;
         if (!confirm('Are you sure you want to delete this video?')) return;
 
         try {
+            setIsDeleting(true);
             await deleteUserVideo(session.user.id, video.id, video.file_path);
             setVideos(videos.filter(v => v.id !== video.id));
             if (selectedVideo?.id === video.id) {
-                setSelectedVideo(null);
+                setSelectedVideo(videos.length > 1 ? videos.find(v => v.id !== video.id) || null : null);
             }
+
+            // Refresh upload limits after deleting
+            const limits = await canUploadMoreVideos(session.user.id);
+            setUploadLimits(limits);
         } catch (err: any) {
             console.error('Error deleting video:', err);
             alert('Failed to delete video: ' + err.message);
+        } finally {
+            setIsDeleting(false);
         }
     };
 
@@ -75,9 +166,56 @@ export default function VideoLibraryPage() {
 
     return (
         <div className="container mx-auto px-4 py-8">
-            <h1 className="text-2xl font-bold mb-6">Your Video Library</h1>
+            <div className="flex justify-between items-center mb-6">
+                <h1 className="text-2xl font-bold">Your Video Library</h1>
+                <Link
+                    href="/subtitle-generator"
+                    className="bg-indigo-600 text-white px-4 py-2 rounded-md hover:bg-indigo-500 flex items-center"
+                >
+                    <Plus className="h-4 w-4 mr-1" />
+                    New Video
+                </Link>
+            </div>
 
-            {loading && <p className="text-gray-500">Loading your videos...</p>}
+            {/* Daily Limit Status */}
+            {uploadLimits && (
+                <div className="bg-white rounded-lg shadow p-4 mb-6">
+                    <div className="flex items-center justify-between">
+                        <div className="flex items-center">
+                            {currentPlan === 'free' ? (
+                                <Clock className="h-5 w-5 text-blue-600 mr-2" />
+                            ) : (
+                                <Crown className="h-5 w-5 text-blue-600 mr-2" />
+                            )}
+                            <div>
+                                <h3 className="font-medium">
+                                    {currentPlan.charAt(0).toUpperCase() + currentPlan.slice(1)} Plan: {uploadLimits.currentCount}/{uploadLimits.limit} videos used today
+                                </h3>
+                                {!uploadLimits.canUpload && timeRemaining && (
+                                    <p className="text-sm text-gray-600">
+                                        Next video available {timeRemaining}
+                                    </p>
+                                )}
+                            </div>
+                        </div>
+
+                        {currentPlan === 'free' && (
+                            <Link
+                                href="/dashboard/manage-plan"
+                                className="text-sm text-blue-600 hover:text-blue-800 hover:underline"
+                            >
+                                Upgrade Plan
+                            </Link>
+                        )}
+                    </div>
+                </div>
+            )}
+
+            {loading && (
+                <div className="flex justify-center items-center my-12">
+                    <Loader2 className="h-10 w-10 animate-spin text-indigo-600" />
+                </div>
+            )}
 
             {error && (
                 <div className="bg-red-50 p-4 rounded-md mb-4 text-red-500">
@@ -94,88 +232,102 @@ export default function VideoLibraryPage() {
                 </div>
             )}
 
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                {/* Left side: Video list */}
-                <div className="lg:col-span-1">
-                    <div className="bg-white rounded-lg shadow overflow-hidden">
-                        <div className="p-4 border-b border-gray-200">
-                            <h2 className="font-medium">Your Videos</h2>
-                        </div>
-                        <ul className="divide-y divide-gray-200 max-h-[600px] overflow-y-auto">
-                            {videos.map((video) => (
-                                <li key={video.id} className="p-4 hover:bg-gray-50 cursor-pointer">
-                                    <div
-                                        className={`flex items-start space-x-3 ${selectedVideo?.id === video.id ? 'bg-indigo-50 rounded-md' : ''}`}
-                                        onClick={() => setSelectedVideo(video)}
-                                    >
-                                        <div className="flex-1 min-w-0">
-                                            <p className="text-sm font-medium text-gray-900 truncate">
-                                                {video.file_name}
-                                            </p>
-                                            <p className="text-xs text-gray-500">
-                                                {new Date(video.created_at).toLocaleDateString()}
-                                            </p>
-                                            <p className="text-xs text-gray-500">
-                                                {video.source_language} → {video.language}
-                                            </p>
-                                        </div>
-                                        <button
-                                            onClick={(e) => {
-                                                e.stopPropagation();
-                                                handleDeleteVideo(video);
-                                            }}
-                                            className="text-red-500 hover:text-red-700 text-xs"
-                                        >
-                                            Delete
-                                        </button>
-                                    </div>
-                                </li>
-                            ))}
-                        </ul>
-                    </div>
-                </div>
-
-                {/* Right side: Video player */}
-                <div className="lg:col-span-2">
-                    {selectedVideo ? (
+            {!loading && videos.length > 0 && (
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                    {/* Left side: Video list */}
+                    <div className="lg:col-span-1">
                         <div className="bg-white rounded-lg shadow overflow-hidden">
                             <div className="p-4 border-b border-gray-200">
-                                <h2 className="font-medium">{selectedVideo.file_name}</h2>
+                                <h2 className="font-medium">Your Videos ({videos.length})</h2>
                             </div>
-                            <div className="p-4">
-                                <VideoPlayer
-                                    videoUrl={selectedVideo.publicUrl}
-                                    height="auto"
-                                    width="100%"
-                                    controls={true}
-                                    filePath={selectedVideo.file_path}
-                                    fileName={selectedVideo.file_name}
-                                />
-                                <div className="mt-4 text-sm text-gray-600">
-                                    <p><strong>Translated from:</strong> {selectedVideo.source_language}</p>
-                                    <p><strong>Subtitles language:</strong> {selectedVideo.language}</p>
-                                    <p><strong>Duration:</strong> {Math.floor(selectedVideo.duration / 60)}m {Math.floor(selectedVideo.duration % 60)}s</p>
-                                    <p><strong>Created:</strong> {new Date(selectedVideo.created_at).toLocaleDateString()}</p>
-
-                                    <div className="mt-4">
-                                        <button
-                                            onClick={() => handleDownloadVideo(selectedVideo)}
-                                            disabled={isDownloading}
-                                            className="bg-indigo-600 text-white px-3 py-1 rounded text-sm hover:bg-indigo-500 disabled:bg-indigo-300 disabled:cursor-not-allowed"
+                            <ul className="divide-y divide-gray-200 max-h-[600px] overflow-y-auto">
+                                {videos.map((video) => (
+                                    <li key={video.id} className="p-4 hover:bg-gray-50 cursor-pointer">
+                                        <div
+                                            className={`flex items-start space-x-3 ${selectedVideo?.id === video.id ? 'bg-indigo-50 rounded-md p-2' : ''}`}
+                                            onClick={() => setSelectedVideo(video)}
                                         >
-                                            {isDownloading ? 'Downloading...' : 'Download Video'}
-                                        </button>
+                                            <div className="flex-1 min-w-0">
+                                                <p className="text-sm font-medium text-gray-900 truncate">
+                                                    {video.file_name}
+                                                </p>
+                                                <p className="text-xs text-gray-500">
+                                                    {new Date(video.created_at).toLocaleDateString()}
+                                                </p>
+                                                <p className="text-xs text-gray-500">
+                                                    {video.source_language} → {video.language}
+                                                </p>
+                                            </div>
+                                            <button
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    handleDeleteVideo(video);
+                                                }}
+                                                disabled={isDeleting}
+                                                className={`text-red-500 hover:text-red-700 text-xs ${isDeleting ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                            >
+                                                {isDeleting ? 'Deleting...' : 'Delete'}
+                                            </button>
+                                        </div>
+                                    </li>
+                                ))}
+                            </ul>
+                        </div>
+                    </div>
+
+                    {/* Right side: Video player */}
+                    <div className="lg:col-span-2">
+                        {selectedVideo ? (
+                            <div className="bg-white rounded-lg shadow overflow-hidden">
+                                <div className="p-4 border-b border-gray-200">
+                                    <h2 className="font-medium">{selectedVideo.file_name}</h2>
+                                </div>
+                                <div className="p-4">
+                                    {selectedVideo.publicUrl ? (
+                                        <VideoPlayer
+                                            videoUrl={selectedVideo.publicUrl}
+                                            height="auto"
+                                            width="100%"
+                                            controls={true}
+                                            filePath={selectedVideo.file_path}
+                                            fileName={selectedVideo.file_name}
+                                        />
+                                    ) : (
+                                        <div className="bg-gray-100 text-center py-12 rounded">
+                                            <p className="text-gray-500">Video URL not available</p>
+                                        </div>
+                                    )}
+                                    <div className="mt-4 text-sm text-gray-600">
+                                        <p><strong>Translated from:</strong> {selectedVideo.source_language}</p>
+                                        <p><strong>Subtitles language:</strong> {selectedVideo.language}</p>
+                                        <p><strong>Duration:</strong> {Math.floor(selectedVideo.duration / 60)}m {Math.floor(selectedVideo.duration % 60)}s</p>
+                                        <p><strong>Created:</strong> {new Date(selectedVideo.created_at).toLocaleDateString()}</p>
+
+                                        <div className="mt-4">
+                                            <button
+                                                onClick={() => handleDownloadVideo(selectedVideo)}
+                                                disabled={isDownloading || !selectedVideo.publicUrl}
+                                                className="bg-indigo-600 text-white px-3 py-1 rounded text-sm hover:bg-indigo-500 disabled:bg-indigo-300 disabled:cursor-not-allowed inline-flex items-center"
+                                            >
+                                                {isDownloading ? (
+                                                    <>
+                                                        <Loader2 className="animate-spin h-4 w-4 mr-1" />
+                                                        Downloading...
+                                                    </>
+                                                ) : 'Download Video'}
+                                            </button>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
-                        </div>
-                    ) : (
-                        <div className="bg-white rounded-lg shadow p-8 text-center h-full flex items-center justify-center">
-                            <p className="text-gray-500">Select a video to preview</p>
-                        </div>
-                    )}
+                        ) : (
+                            <div className="bg-white rounded-lg shadow p-8 text-center h-full flex items-center justify-center">
+                                <p className="text-gray-500">Select a video to preview</p>
+                            </div>
+                        )}
+                    </div>
                 </div>
-            </div>
+            )}
         </div>
     );
 }

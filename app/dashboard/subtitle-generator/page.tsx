@@ -7,9 +7,10 @@ import { useEffect, useState } from "react"
 import VideoDropzone from "@/components/VideoDropzone"
 import LanguageSelector from "@/components/LanguageSelector"
 import VideoPlayer from "@/components/VideoPlayer"
-import { Loader2 } from "lucide-react"
-import { uploadProcessedVideo } from "@/lib/supabase"
+import { Loader2, Clock, AlertCircle } from "lucide-react"
+import { canUploadMoreVideos, getUserSubscription, uploadProcessedVideo } from "@/lib/supabase"
 import Link from "next/link"
+import { formatDistanceToNow } from 'date-fns'
 
 type VideoSource = File | string | null
 type ProcessingState = "idle" | "uploading" | "processing" | "downloading" | "completed" | "error"
@@ -39,11 +40,107 @@ export default function SubtitleGenerator() {
     const [savedToLibrary, setSavedToLibrary] = useState(false)
     const [saving, setSaving] = useState(false)
 
+    // New state for plan limits
+    const [uploadLimits, setUploadLimits] = useState<{
+        canUpload: boolean;
+        currentCount: number;
+        limit: number;
+        remaining: number;
+        nextUploadTime?: Date;
+    }>({
+        canUpload: true,
+        currentCount: 0,
+        limit: 1,
+        remaining: 1
+    })
+    const [subscription, setSubscription] = useState<{
+        plan_id: string;
+        status: string;
+    }>({
+        plan_id: 'free',
+        status: 'active'
+    })
+    const [timeRemaining, setTimeRemaining] = useState<string>('')
+    const [isTimerActive, setIsTimerActive] = useState(false)
+
     useEffect(() => {
         if (isLoaded && !isSignedIn) {
             router.push("/signin?callbackUrl=/subtitle-generator")
+        } else if (isSignedIn && session?.user?.id) {
+            loadUserPlanLimits()
         }
-    }, [isLoaded, isSignedIn, router])
+    }, [isLoaded, isSignedIn, router, session?.user?.id])
+
+    // Load user's plan limits and check if they can upload more videos
+    const loadUserPlanLimits = async () => {
+        if (!session?.user?.id) return
+
+        try {
+            // These functions now handle errors internally and return defaults if needed
+
+            // Get user's subscription - won't throw errors
+            const userSubscription = await getUserSubscription(session.user.id)
+            setSubscription({
+                plan_id: userSubscription.plan_id || 'free',
+                status: userSubscription.status || 'active'
+            })
+
+            // Check if user can upload more videos - won't throw errors
+            const limits = await canUploadMoreVideos(session.user.id)
+            setUploadLimits(limits)
+
+            // Check if we need to activate a timer for the next available upload
+            if (!limits.canUpload && limits.nextUploadTime) {
+                setIsTimerActive(true)
+                updateRemainingTime(limits.nextUploadTime)
+
+                // Set up interval to update the timer
+                const timerInterval = setInterval(() => {
+                    if (limits.nextUploadTime) {
+                        const stillValid = updateRemainingTime(limits.nextUploadTime)
+                        if (!stillValid) {
+                            clearInterval(timerInterval)
+                            loadUserPlanLimits() // Reload limits after timer expires
+                        }
+                    } else {
+                        clearInterval(timerInterval)
+                    }
+                }, 60000) // Update every minute
+
+                return () => clearInterval(timerInterval)
+            }
+        } catch (error) {
+            console.error("Error loading user plan limits:", error)
+            const errorMessage = error instanceof Error ? error.message : "Failed to load your plan limits"
+            setErrorMessage(errorMessage)
+
+            // Set default values
+            setSubscription({
+                plan_id: 'free',
+                status: 'active'
+            })
+
+            setUploadLimits({
+                canUpload: true,
+                currentCount: 0,
+                limit: 1,
+                remaining: 1
+            })
+        }
+    }
+
+    // Update the remaining time display and return if timer is still valid
+    const updateRemainingTime = (nextTime: Date): boolean => {
+        const now = new Date()
+        if (now >= nextTime) {
+            setIsTimerActive(false)
+            setTimeRemaining('')
+            return false
+        }
+
+        setTimeRemaining(formatDistanceToNow(nextTime, { addSuffix: true }))
+        return true
+    }
 
     // Create an object URL for File type video sources
     useEffect(() => {
@@ -82,6 +179,13 @@ export default function SubtitleGenerator() {
 
     const processVideo = async () => {
         if (!videoSource || !session?.user?.id) return
+
+        // Check if user can upload more videos
+        const limits = await canUploadMoreVideos(session.user.id)
+        if (!limits.canUpload) {
+            setErrorMessage(`You've reached your daily video limit (${limits.limit} per day). ${timeRemaining ? `Next upload available ${timeRemaining}.` : 'Please upgrade your plan for more videos per day.'}`)
+            return
+        }
 
         try {
             setProcessingState("uploading")
@@ -141,6 +245,9 @@ export default function SubtitleGenerator() {
 
             setProcessingProgress(100)
             setProcessingState("completed")
+
+            // Reload limits after processing is complete
+            loadUserPlanLimits()
         } catch (error: any) {
             console.error("Processing error:", error)
             if (error.message && error.message.includes("YouTube")) {
@@ -215,6 +322,9 @@ export default function SubtitleGenerator() {
 
             console.log("Upload successful:", result)
             setSavedToLibrary(true)
+
+            // Reload limits after saving to library
+            loadUserPlanLimits()
         } catch (error: any) {
             console.error("Error saving to library:", error)
             setErrorMessage(`Failed to save to your library: ${error.message}`)
@@ -254,7 +364,37 @@ export default function SubtitleGenerator() {
                         </p>
                     </div>
 
-                    <div className="mt-12 bg-white shadow overflow-hidden sm:rounded-lg">
+                    {/* Plan Limit Banner */}
+                    <div className="mt-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
+                        <div className="flex items-center justify-between">
+                            <div className="flex items-center">
+                                <div className="mr-3 bg-blue-100 rounded-full p-2">
+                                    <Clock className="h-5 w-5 text-blue-600" />
+                                </div>
+                                <div>
+                                    <h3 className="font-medium text-blue-800">
+                                        {subscription.plan_id.charAt(0).toUpperCase() + subscription.plan_id.slice(1)} Plan
+                                    </h3>
+                                    <p className="text-sm text-blue-600">
+                                        {uploadLimits.currentCount}/{uploadLimits.limit} videos used today
+                                        {isTimerActive && timeRemaining &&
+                                            ` • Next video available ${timeRemaining}`
+                                        }
+                                    </p>
+                                </div>
+                            </div>
+                            {(uploadLimits.remaining === 0 || !uploadLimits.canUpload) && subscription.plan_id === 'free' && (
+                                <Link
+                                    href="/dashboard/manage-plan"
+                                    className="bg-blue-600 hover:bg-blue-700 text-white text-sm px-4 py-2 rounded-md"
+                                >
+                                    Upgrade Plan
+                                </Link>
+                            )}
+                        </div>
+                    </div>
+
+                    <div className="mt-8 bg-white shadow overflow-hidden sm:rounded-lg">
                         <div className="px-4 py-5 sm:p-6">
                             {processingState === "completed" && processedVideoUrl ? (
                                 <div className="space-y-6">
@@ -302,9 +442,9 @@ export default function SubtitleGenerator() {
                                                 "Saved to Library"
                                             ) : saving ? (
                                                 <span className="flex items-center">
-                          <Loader2 className="animate-spin h-4 w-4 mr-2" />
-                          Saving...
-                        </span>
+                                                  <Loader2 className="animate-spin h-4 w-4 mr-2" />
+                                                  Saving...
+                                                </span>
                                             ) : (
                                                 "Save to My Library"
                                             )}
@@ -339,91 +479,114 @@ export default function SubtitleGenerator() {
                                 </div>
                             ) : (
                                 <>
-                                    <VideoDropzone
-                                        onVideoSelected={handleVideoSelected}
-                                        isProcessing={processingState !== "idle" && processingState !== "error"}
-                                    />
-
-                                    {/* Show original video preview if available */}
-                                    {originalVideoUrl && processingState === "idle" && (
-                                        <div className="mt-6">
-                                            <h3 className="text-lg font-medium text-gray-900 mb-3">Video Preview</h3>
-                                            <VideoPlayer videoUrl={originalVideoUrl} />
+                                    {!uploadLimits.canUpload ? (
+                                        <div className="text-center py-10">
+                                            <AlertCircle className="h-16 w-16 text-amber-500 mx-auto mb-4" />
+                                            <h3 className="text-lg font-medium text-gray-900 mb-2">Daily Limit Reached</h3>
+                                            <p className="text-gray-600 mb-6">
+                                                You've used all {uploadLimits.limit} of your daily video translations.
+                                                {isTimerActive && timeRemaining && (
+                                                    <span className="block mt-2">
+                                                        Next video will be available <span className="font-medium">{timeRemaining}</span>
+                                                    </span>
+                                                )}
+                                            </p>
+                                            <Link
+                                                href="/dashboard/manage-plan"
+                                                className="inline-flex items-center px-6 py-3 border border-transparent text-base font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none"
+                                            >
+                                                Upgrade Your Plan
+                                            </Link>
                                         </div>
-                                    )}
+                                    ) : (
+                                        <>
+                                            <VideoDropzone
+                                                onVideoSelected={handleVideoSelected}
+                                                isProcessing={processingState !== "idle" && processingState !== "error"}
+                                            />
 
-                                    <LanguageSelector
-                                        sourceLanguage={sourceLanguage}
-                                        targetLanguage={targetLanguage}
-                                        onSourceLanguageChange={setSourceLanguage}
-                                        onTargetLanguageChange={setTargetLanguage}
-                                        disabled={processingState !== "idle" && processingState !== "error"}
-                                    />
-
-                                    <div className="mt-8 flex justify-center">
-                                        <button
-                                            onClick={processVideo}
-                                            disabled={!videoSource || (processingState !== "idle" && processingState !== "error")}
-                                            className="inline-flex items-center px-6 py-3 border border-transparent text-base font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
-                                        >
-                                            {processingState !== "idle" && processingState !== "error" ? (
-                                                <span className="flex items-center">
-                          <Loader2 className="animate-spin h-5 w-5 mr-2" />
-                                                    {processingState === "uploading" && "Uploading..."}
-                                                    {processingState === "processing" && "Processing..."}
-                                                    {processingState === "downloading" && "Finalizing..."}
-                        </span>
-                                            ) : (
-                                                "Start Processing"
+                                            {/* Show original video preview if available */}
+                                            {originalVideoUrl && processingState === "idle" && (
+                                                <div className="mt-6">
+                                                    <h3 className="text-lg font-medium text-gray-900 mb-3">Video Preview</h3>
+                                                    <VideoPlayer videoUrl={originalVideoUrl} />
+                                                </div>
                                             )}
-                                        </button>
-                                    </div>
 
-                                    {/* Progress bar */}
-                                    {processingState !== "idle" && processingState !== "error" && processingState !== "completed" && (
-                                        <div className="mt-6">
-                                            <div className="relative pt-1">
-                                                <div className="flex mb-2 items-center justify-between">
-                                                    <div>
-                            <span className="text-xs font-semibold inline-block py-1 px-2 uppercase rounded-full text-indigo-600 bg-indigo-200">
-                              {processingState === "uploading"
-                                  ? "Uploading"
-                                  : processingState === "processing"
-                                      ? "Processing"
-                                      : "Finalizing"}
-                            </span>
-                                                    </div>
-                                                    <div className="text-right">
-                            <span className="text-xs font-semibold inline-block text-indigo-600">
-                              {processingProgress}%
-                            </span>
-                                                    </div>
-                                                </div>
-                                                <div className="overflow-hidden h-2 mb-4 text-xs flex rounded bg-indigo-200">
-                                                    <div
-                                                        style={{ width: `${processingProgress}%` }}
-                                                        className="shadow-none flex flex-col text-center whitespace-nowrap text-white justify-center bg-indigo-500 transition-all duration-500"
-                                                    ></div>
-                                                </div>
+                                            <LanguageSelector
+                                                sourceLanguage={sourceLanguage}
+                                                targetLanguage={targetLanguage}
+                                                onSourceLanguageChange={setSourceLanguage}
+                                                onTargetLanguageChange={setTargetLanguage}
+                                                disabled={processingState !== "idle" && processingState !== "error"}
+                                            />
+
+                                            <div className="mt-8 flex justify-center">
+                                                <button
+                                                    onClick={processVideo}
+                                                    disabled={!videoSource || (processingState !== "idle" && processingState !== "error")}
+                                                    className="inline-flex items-center px-6 py-3 border border-transparent text-base font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
+                                                >
+                                                    {processingState !== "idle" && processingState !== "error" ? (
+                                                        <span className="flex items-center">
+                                                            <Loader2 className="animate-spin h-5 w-5 mr-2" />
+                                                            {processingState === "uploading" && "Uploading..."}
+                                                            {processingState === "processing" && "Processing..."}
+                                                            {processingState === "downloading" && "Finalizing..."}
+                                                        </span>
+                                                    ) : (
+                                                        "Start Processing"
+                                                    )}
+                                                </button>
                                             </div>
-                                        </div>
+
+                                            {/* Progress bar */}
+                                            {processingState !== "idle" && processingState !== "error" && processingState !== "completed" && (
+                                                <div className="mt-6">
+                                                    <div className="relative pt-1">
+                                                        <div className="flex mb-2 items-center justify-between">
+                                                            <div>
+                                                                <span className="text-xs font-semibold inline-block py-1 px-2 uppercase rounded-full text-indigo-600 bg-indigo-200">
+                                                                  {processingState === "uploading"
+                                                                      ? "Uploading"
+                                                                      : processingState === "processing"
+                                                                          ? "Processing"
+                                                                          : "Finalizing"}
+                                                                </span>
+                                                            </div>
+                                                            <div className="text-right">
+                                                                <span className="text-xs font-semibold inline-block text-indigo-600">
+                                                                  {processingProgress}%
+                                                                </span>
+                                                            </div>
+                                                        </div>
+                                                        <div className="overflow-hidden h-2 mb-4 text-xs flex rounded bg-indigo-200">
+                                                            <div
+                                                                style={{ width: `${processingProgress}%` }}
+                                                                className="shadow-none flex flex-col text-center whitespace-nowrap text-white justify-center bg-indigo-500 transition-all duration-500"
+                                                            ></div>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            )}
+
+                                            {/* Show processing video if available */}
+                                            {originalVideoUrl &&
+                                                processingState !== "idle" &&
+                                                processingState !== "error" &&
+                                                processingState !== "completed" && (
+                                                    <div className="mt-8">
+                                                        <div className="text-center mb-4">
+                                                            <h3 className="text-lg font-medium text-gray-900">Processing Your Video</h3>
+                                                            <p className="text-sm text-gray-500">
+                                                                Please wait while we process your video. This may take a few minutes.
+                                                            </p>
+                                                        </div>
+                                                        <VideoPlayer videoUrl={originalVideoUrl} />
+                                                    </div>
+                                                )}
+                                        </>
                                     )}
-
-                                    {/* Show processing video if available */}
-                                    {originalVideoUrl &&
-                                        processingState !== "idle" &&
-                                        processingState !== "error" &&
-                                        processingState !== "completed" && (
-                                            <div className="mt-8">
-                                                <div className="text-center mb-4">
-                                                    <h3 className="text-lg font-medium text-gray-900">Processing Your Video</h3>
-                                                    <p className="text-sm text-gray-500">
-                                                        Please wait while we process your video. This may take a few minutes.
-                                                    </p>
-                                                </div>
-                                                <VideoPlayer videoUrl={originalVideoUrl} />
-                                            </div>
-                                        )}
 
                                     {errorMessage && <div className="mt-4 text-center text-red-600">{errorMessage}</div>}
                                 </>

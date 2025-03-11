@@ -1,10 +1,13 @@
+// dashboard/manage-plan/page.tsx
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useSession } from "next-auth/react";
-import { getUserStorageStats, getUserVideos, updateUserSubscription } from '@/lib/supabase';
-import { CheckCircle, XCircle, ArrowRight, Crown, Upload, HardDrive } from 'lucide-react';
+import { supabase, getUserStorageStats, getUserSubscription, canUploadMoreVideos } from '@/lib/supabase';
+import { CheckCircle, XCircle, ArrowRight, Crown, Upload, HardDrive, Loader2, RefreshCw } from 'lucide-react';
+import { toast } from 'react-hot-toast'; // Add this package if you don't have it
+import Link from 'next/link';
 
 // Plan types
 interface PlanFeature {
@@ -34,6 +37,8 @@ interface UserSubscription {
     videosTotal: number;
     storageUsed: string;
     storageTotal: string;
+    storageUsedPercent: number;
+    videosUsedPercent: number;
 }
 
 export default function ManagePlanPage() {
@@ -42,7 +47,10 @@ export default function ManagePlanPage() {
     const [selectedPlan, setSelectedPlan] = useState<string | null>(null);
     const [activeTab, setActiveTab] = useState<'monthly' | 'yearly'>('monthly');
     const [loading, setLoading] = useState(true);
+    const [refreshing, setRefreshing] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [processingPayment, setProcessingPayment] = useState(false);
+    const [loadAttempted, setLoadAttempted] = useState(false);
 
     // Current subscription state
     const [currentSubscription, setCurrentSubscription] = useState<UserSubscription>({
@@ -52,7 +60,9 @@ export default function ManagePlanPage() {
         videosUsed: 0,
         videosTotal: 1,
         storageUsed: '0',
-        storageTotal: '5'
+        storageTotal: '5',
+        storageUsedPercent: 0,
+        videosUsedPercent: 0
     });
 
     // Plans data
@@ -126,31 +136,115 @@ export default function ManagePlanPage() {
         return activeTab === 'yearly' ? (plan.price * 12 * 0.8).toFixed(2) : plan.price.toFixed(2);
     };
 
-    // Load user's subscription data and usage from Supabase
+    // Check if returning from Stripe
     useEffect(() => {
-        const fetchUserData = async () => {
-            if (status !== "authenticated" || !session?.user?.id) return;
+        // Check for URL success parameter after Stripe redirect
+        if (typeof window !== 'undefined') {
+            const urlParams = new URLSearchParams(window.location.search);
+            const success = urlParams.get('success');
+            const canceled = urlParams.get('canceled');
+
+            if (success === 'true') {
+                toast.success('Payment successful! Your subscription is being updated...');
+                setTimeout(() => {
+                    refreshSubscription();
+                }, 2000); // Give the webhook a chance to process
+            } else if (canceled === 'true') {
+                toast.error('Payment canceled. Your subscription remains unchanged.');
+            }
+
+            // Remove query params from URL to avoid re-triggering on refresh
+            if (success || canceled) {
+                const newUrl = window.location.pathname;
+                window.history.replaceState({}, document.title, newUrl);
+            }
+        }
+    }, []);
+
+    // Check localStorage for pending checkout
+    const checkPendingCheckout = useCallback(() => {
+        if (typeof window !== 'undefined') {
+            const pendingCheckout = localStorage.getItem('pendingCheckout');
+            const checkoutTime = localStorage.getItem('checkoutTime');
+
+            if (pendingCheckout === 'true' && checkoutTime) {
+                // Check if this is recent (within last 10 minutes)
+                const timeElapsed = Date.now() - parseInt(checkoutTime);
+                const isRecent = timeElapsed < 10 * 60 * 1000; // 10 minutes
+
+                if (isRecent) {
+                    console.log('Detected recent checkout. Refreshing subscription data...');
+
+                    toast.loading('Checking subscription status...', {
+                        id: 'checking-subscription'
+                    });
+
+                    setTimeout(() => {
+                        refreshSubscription().then(() => {
+                            localStorage.removeItem('pendingCheckout');
+                            localStorage.removeItem('checkoutTime');
+
+                            toast.success('Subscription updated successfully', {
+                                id: 'checking-subscription'
+                            });
+                        });
+                    }, 2000);
+                } else {
+                    // Clean up old data
+                    localStorage.removeItem('pendingCheckout');
+                    localStorage.removeItem('checkoutTime');
+                }
+            }
+        }
+    }, []);
+
+    // Load user's subscription data and usage
+    const fetchUserData = useCallback(async (forceRefresh = false) => {
+        if (status !== "authenticated" || !session?.user?.id) return;
+
+        try {
+            setLoading(true);
+            setLoadAttempted(true);
+            setError(null); // Clear any previous errors
+
+            console.log("Fetching user data for plan management...");
+
+            // Directly query the database first for the most up-to-date subscription information
+            const { data: directSubscriptionData, error: subError } = await supabase
+                .from('user_subscriptions')
+                .select('*, subscription_plans(*)')
+                .eq('user_id', session.user.id)
+                .single();
+
+            if (subError && subError.code !== 'PGRST116') {
+                console.error("Error fetching subscription directly:", subError);
+            }
+
+            // Log what we found directly from the database
+            if (directSubscriptionData) {
+                console.log("Found subscription in database:", directSubscriptionData);
+            } else {
+                console.log("No subscription found directly in database, will use getUserSubscription");
+            }
+
+            // Get user's subscription plan from Supabase - won't throw errors
+            const userSubscription = await getUserSubscription(session.user.id);
+            console.log("User subscription from getUserSubscription:", userSubscription);
+
+            // Match the plan to get limits - with fallback to free plan
+            const userPlanId = directSubscriptionData?.plan_id || userSubscription.plan_id || 'free';
+            const userPlan = plans.find(plan => plan.id === userPlanId) || plans[0];
+
+            console.log("Resolved user plan:", userPlan.id);
 
             try {
-                setLoading(true);
-
-                // Get storage statistics
+                // Get storage statistics - won't throw errors
                 const storageStats = await getUserStorageStats(session.user.id);
+                console.log("Storage stats:", storageStats);
 
-                // Get today's video count (or fetch from a dedicated API)
-                const todayVideos = await getUserVideos(session.user.id);
-                const todayDate = new Date().toISOString().split('T')[0];
-                const videosUploadedToday = todayVideos.filter(video =>
-                    new Date(video.created_at).toISOString().split('T')[0] === todayDate
-                ).length;
-
-                // Get user's subscription plan from Supabase
-                // This would be a new function you'd need to implement in supabase.ts
-                // to fetch the user's current subscription plan from your database
-                const userSubscription = await getUserSubscription(session.user.id);
-
-                // Match the plan to get limits
-                const userPlan = plans.find(plan => plan.id === userSubscription?.plan_id) || plans[0];
+                // Get daily video usage - won't throw errors
+                const videoUsage = await canUploadMoreVideos(session.user.id);
+                console.log("Video usage:", videoUsage);
 
                 // Format storage values for display
                 const formatBytes = (bytes: number) => {
@@ -161,27 +255,165 @@ export default function ManagePlanPage() {
                     return parseFloat((bytes / Math.pow(k, i)).toFixed(2));
                 };
 
+                // Calculate percentages for progress bars
+                const storageUsedPercent = Math.round((storageStats.usedStorage / storageStats.maxStorage) * 100);
+                const videosUsedPercent = Math.round((videoUsage.currentCount / videoUsage.limit) * 100);
+
+                // Use the status from direct query if available, otherwise from getUserSubscription
+                const subscriptionStatus = directSubscriptionData?.status || userSubscription.status || 'active';
+
+                // Use next_billing_date from direct query if available
+                const nextBillingDate = directSubscriptionData?.next_billing_date ||
+                    userSubscription.next_billing_date ||
+                    new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+
                 // Update subscription state with real data
                 setCurrentSubscription({
                     plan: userPlan.id,
-                    status: userSubscription?.status || 'active',
-                    nextBillingDate: userSubscription?.next_billing_date || '2025-04-08',
-                    videosUsed: videosUploadedToday,
+                    status: subscriptionStatus,
+                    nextBillingDate: nextBillingDate,
+                    videosUsed: videoUsage.currentCount,
                     videosTotal: userPlan.videosPerDay,
                     storageUsed: formatBytes(storageStats.usedStorage).toString(),
-                    storageTotal: formatBytes(userPlan.storageBytes).toString()
+                    storageTotal: formatBytes(userPlan.storageBytes).toString(),
+                    storageUsedPercent: storageUsedPercent,
+                    videosUsedPercent: videosUsedPercent
                 });
 
-            } catch (err: any) {
-                console.error('Error fetching user data:', err);
-                setError(err.message || 'Failed to load your subscription data');
-            } finally {
-                setLoading(false);
+                // Show success toast if this was a manual refresh
+                if (forceRefresh) {
+                    toast.success("Subscription data refreshed successfully");
+                }
+            } catch (statsErr) {
+                console.error("Error fetching usage stats:", statsErr);
+
+                // If we can't get usage stats, still use the plan info but with default usage
+                setCurrentSubscription({
+                    plan: userPlan.id,
+                    status: directSubscriptionData?.status || userSubscription.status || 'active',
+                    nextBillingDate: directSubscriptionData?.next_billing_date || userSubscription.next_billing_date || '2025-04-08',
+                    videosUsed: 0,
+                    videosTotal: userPlan.videosPerDay,
+                    storageUsed: '0',
+                    storageTotal: userPlan.storage.replace('GB', ''),
+                    storageUsedPercent: 0,
+                    videosUsedPercent: 0
+                });
+            }
+        } catch (err: any) {
+            console.error('Error fetching user data:', err);
+            const errorMessage = err instanceof Error ? err.message : 'Failed to load your subscription data';
+            setError(errorMessage);
+
+            if (forceRefresh) {
+                toast.error("Could not refresh subscription data. Please try again.");
+            }
+
+            // Default values if everything fails
+            setCurrentSubscription({
+                plan: 'free',
+                status: 'active',
+                nextBillingDate: '2025-04-08',
+                videosUsed: 0,
+                videosTotal: 1,
+                storageUsed: '0',
+                storageTotal: '5',
+                storageUsedPercent: 0,
+                videosUsedPercent: 0
+            });
+        } finally {
+            // Always turn off loading after 2 seconds max, even if something is stuck
+            setTimeout(() => {
+                if (loading) {
+                    console.log("Forcing loading state to complete after timeout");
+                    setLoading(false);
+                }
+            }, 2000);
+
+            setLoading(false);
+            setRefreshing(false);
+        }
+    }, [session?.user?.id, status, plans, loading]);
+
+    // Check on component mount
+    useEffect(() => {
+        if (status === "unauthenticated") {
+            router.push('/signin');
+        } else if (status === "authenticated" && !loadAttempted) {
+            fetchUserData();
+            checkPendingCheckout(); // Check for pending checkout on load
+        }
+    }, [status, router, fetchUserData, loadAttempted, checkPendingCheckout]);
+
+    // Improved refreshSubscription function with retry logic
+    const refreshSubscription = async () => {
+        setRefreshing(true);
+        let retryCount = 0;
+        const maxRetries = 3;
+
+        const attemptRefresh = async () => {
+            try {
+                // Clear any previous errors
+                setError(null);
+
+                // Get the most up-to-date subscription data directly from the database
+                const { data: directSubscriptionData, error: subError } = await supabase
+                    .from('user_subscriptions')
+                    .select('*, subscription_plans(*)')
+                    .eq('user_id', session?.user?.id)
+                    .single();
+
+                if (subError && subError.code !== 'PGRST116') {
+                    console.error("Error fetching subscription directly:", subError);
+                    throw new Error(`Database error: ${subError.message}`);
+                }
+
+                if (directSubscriptionData) {
+                    console.log("Found subscription in database:", directSubscriptionData);
+
+                    // Update UI with fetched data
+                    const userPlan = plans.find(plan => plan.id === directSubscriptionData.plan_id) || plans[0];
+
+                    setCurrentSubscription(prev => ({
+                        ...prev,
+                        plan: directSubscriptionData.plan_id,
+                        status: directSubscriptionData.status,
+                        nextBillingDate: directSubscriptionData.next_billing_date
+                    }));
+
+                    // Then fetch the rest of the plan data
+                    await fetchUserData(true);
+
+                    toast.success("Subscription data refreshed successfully!");
+                    setRefreshing(false);
+                    return true;
+                } else {
+                    console.log("No subscription found directly, will use getUserSubscription");
+                    // Fall back to regular fetch
+                    await fetchUserData(true);
+                    setRefreshing(false);
+                    return true;
+                }
+            } catch (err) {
+                console.error("Error refreshing subscription:", err);
+                retryCount++;
+
+                if (retryCount >= maxRetries) {
+                    toast.error("Could not refresh subscription after multiple attempts. Please try again later.");
+                    setRefreshing(false);
+                    return false;
+                }
+
+                // Wait before retrying (exponential backoff)
+                const delay = Math.pow(2, retryCount) * 1000;
+                toast.loading(`Retrying in ${delay/1000} seconds...`, { duration: delay });
+
+                return new Promise(resolve => setTimeout(() => resolve(attemptRefresh()), delay));
             }
         };
 
-        fetchUserData();
-    }, [session?.user?.id, status]);
+        return attemptRefresh();
+    };
 
     // Handle checkout with Stripe
     const handleUpgrade = async (planId: string) => {
@@ -191,6 +423,8 @@ export default function ManagePlanPage() {
         }
 
         setSelectedPlan(planId);
+        setProcessingPayment(true);
+        setError(null);
 
         try {
             // Create a checkout session with Stripe
@@ -201,24 +435,28 @@ export default function ManagePlanPage() {
                 },
                 body: JSON.stringify({
                     planId: planId,
-                    userId: session.user.id,
                     billingCycle: activeTab,
                 }),
             });
 
             if (!response.ok) {
-                const error = await response.json();
-                throw new Error(error.message || 'Failed to create checkout session');
+                const errorData = await response.json();
+                throw new Error(errorData.message || 'Failed to create checkout session');
             }
 
             const { sessionUrl } = await response.json();
 
+            // Store checkout info in localStorage for verification on return
+            localStorage.setItem('pendingCheckout', 'true');
+            localStorage.setItem('checkoutTime', Date.now().toString());
+
             // Redirect to Stripe Checkout
             window.location.href = sessionUrl;
-
         } catch (err: any) {
             console.error('Checkout error:', err);
             setError(err.message || 'Failed to process checkout');
+            toast.error(err.message || 'Failed to process checkout');
+            setProcessingPayment(false);
         }
     };
 
@@ -227,16 +465,19 @@ export default function ManagePlanPage() {
 
         if (confirm('Are you sure you want to cancel your subscription? You will be downgraded to the Free plan at the end of your billing cycle.')) {
             try {
+                setProcessingPayment(true);
                 // Cancel subscription in your database and with Stripe
-                await fetch('/api/cancel-subscription', {
+                const response = await fetch('/api/cancel-subscription', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
                     },
-                    body: JSON.stringify({
-                        userId: session.user.id,
-                    }),
                 });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.message || 'Failed to cancel subscription');
+                }
 
                 // Update UI to show cancellation
                 setCurrentSubscription({
@@ -244,34 +485,24 @@ export default function ManagePlanPage() {
                     status: 'canceling',
                 });
 
+                toast.success('Your subscription has been canceled. You will be downgraded at the end of your billing cycle.');
+
+                // Reload the data after a short delay
+                setTimeout(() => {
+                    refreshSubscription();
+                }, 1500);
+
             } catch (err: any) {
                 console.error('Error canceling subscription:', err);
                 setError(err.message || 'Failed to cancel subscription');
+                toast.error(err.message || 'Failed to cancel subscription');
+            } finally {
+                setProcessingPayment(false);
             }
         }
     };
 
-    // Placeholder function - implement this in supabase.ts
-    const getUserSubscription = async (userId: string) => {
-        // This would be implemented in your supabase.ts file
-        // to fetch the user's current subscription from your database
-        // For now, return a placeholder
-        return {
-            plan_id: 'free',
-            status: 'active',
-            next_billing_date: '2025-04-08',
-            stripe_subscription_id: null
-        };
-    };
-
-    // Check authentication status
-    useEffect(() => {
-        if (status === "unauthenticated") {
-            router.push('/signin');
-        }
-    }, [status, router]);
-
-    if (status === "loading" || loading) {
+    if (status === "loading" || (loading && !loadAttempted)) {
         return (
             <div className="flex justify-center items-center min-h-screen">
                 <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
@@ -293,7 +524,21 @@ export default function ManagePlanPage() {
 
                 {/* Current Plan Summary */}
                 <div className="max-w-4xl mx-auto bg-white p-6 shadow-md rounded-lg mb-10">
-                    <h2 className="text-2xl font-semibold border-b pb-3 mb-4">Current Plan: <span className="text-blue-600">{currentSubscription.plan.charAt(0).toUpperCase() + currentSubscription.plan.slice(1)}</span></h2>
+                    <div className="flex justify-between">
+                        <h2 className="text-2xl font-semibold border-b pb-3 mb-4">Current Plan: <span className="text-blue-600">{currentSubscription.plan.charAt(0).toUpperCase() + currentSubscription.plan.slice(1)}</span></h2>
+                        <button
+                            onClick={refreshSubscription}
+                            disabled={refreshing}
+                            className="text-blue-600 hover:text-blue-800 flex items-center text-sm"
+                        >
+                            {refreshing ? (
+                                <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                            ) : (
+                                <RefreshCw className="h-4 w-4 mr-1" />
+                            )}
+                            Refresh
+                        </button>
+                    </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                         <div>
                             <p className="text-gray-700 mb-2">Status: <span className="font-medium">{currentSubscription.status.charAt(0).toUpperCase() + currentSubscription.status.slice(1)}</span></p>
@@ -303,22 +548,26 @@ export default function ManagePlanPage() {
                             <div className="mb-2">
                                 <p className="text-gray-700 mb-1">Videos: <span className="font-medium">{currentSubscription.videosUsed}/{currentSubscription.videosTotal} per day</span></p>
                                 <div className="w-full bg-gray-200 rounded-full h-2">
-                                    <div className="bg-blue-600 h-2 rounded-full" style={{ width: `${(currentSubscription.videosUsed / currentSubscription.videosTotal) * 100}%` }}></div>
+                                    <div className="bg-blue-600 h-2 rounded-full" style={{ width: `${currentSubscription.videosUsedPercent}%` }}></div>
                                 </div>
                             </div>
                             <div>
                                 <p className="text-gray-700 mb-1">Storage: <span className="font-medium">{currentSubscription.storageUsed}/{currentSubscription.storageTotal}GB</span></p>
                                 <div className="w-full bg-gray-200 rounded-full h-2">
-                                    <div className="bg-blue-600 h-2 rounded-full" style={{ width: `${(parseFloat(currentSubscription.storageUsed) / parseFloat(currentSubscription.storageTotal)) * 100}%` }}></div>
+                                    <div className="bg-blue-600 h-2 rounded-full" style={{ width: `${currentSubscription.storageUsedPercent}%` }}></div>
                                 </div>
                             </div>
                         </div>
                     </div>
                     {currentSubscription.plan !== 'free' && (
                         <button
-                            className="mt-6 bg-red-500 hover:bg-red-600 text-white py-2 px-6 rounded-md transition-colors font-medium"
+                            className={`mt-6 ${processingPayment
+                                ? 'bg-gray-400 cursor-not-allowed'
+                                : 'bg-red-500 hover:bg-red-600'} text-white py-2 px-6 rounded-md transition-colors font-medium flex items-center`}
                             onClick={handleCancel}
+                            disabled={processingPayment}
                         >
+                            {processingPayment && <Loader2 className="animate-spin h-4 w-4 mr-2" />}
                             Cancel Subscription
                         </button>
                     )}
@@ -377,17 +626,30 @@ export default function ManagePlanPage() {
                                 </div>
                                 <button
                                     className={`w-full py-3 rounded-lg font-medium transition-colors flex justify-center items-center
-                                        ${currentSubscription.plan === plan.id
+                                        ${processingPayment
                                         ? 'bg-gray-300 cursor-not-allowed text-gray-600'
-                                        : plan.id === 'free'
-                                            ? 'bg-gray-800 hover:bg-gray-900 text-white'
-                                            : 'bg-blue-600 hover:bg-blue-700 text-white'
+                                        : currentSubscription.plan === plan.id
+                                            ? 'bg-gray-300 cursor-not-allowed text-gray-600'
+                                            : plan.id === 'free'
+                                                ? 'bg-gray-800 hover:bg-gray-900 text-white'
+                                                : 'bg-blue-600 hover:bg-blue-700 text-white'
                                     }`}
-                                    onClick={() => currentSubscription.plan !== plan.id && handleUpgrade(plan.id)}
-                                    disabled={currentSubscription.plan === plan.id}
+                                    onClick={() => currentSubscription.plan !== plan.id && !processingPayment && handleUpgrade(plan.id)}
+                                    disabled={currentSubscription.plan === plan.id || processingPayment}
                                 >
-                                    {currentSubscription.plan === plan.id ? 'Current Plan' : 'Upgrade'}
-                                    {currentSubscription.plan !== plan.id && <ArrowRight className="ml-2 h-5 w-5" />}
+                                    {processingPayment && selectedPlan === plan.id ? (
+                                        <span className="flex items-center">
+                                            <Loader2 className="animate-spin h-5 w-5 mr-2" />
+                                            Processing
+                                        </span>
+                                    ) : currentSubscription.plan === plan.id ? (
+                                        'Current Plan'
+                                    ) : (
+                                        <>
+                                            Upgrade
+                                            <ArrowRight className="ml-2 h-5 w-5" />
+                                        </>
+                                    )}
                                 </button>
                                 <div className="mt-6 space-y-3">
                                     {plan.features.map((feature, idx) => (
