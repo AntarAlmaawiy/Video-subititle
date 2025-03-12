@@ -9,6 +9,7 @@ export async function middleware(request: NextRequest) {
     // Explicitly allow these paths
     if (
         path.startsWith('/api/auth') ||
+        path.startsWith('/api/webhook') ||
         path === '/signing' ||
         path === '/signup' ||
         path === '/' ||

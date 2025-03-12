@@ -8,6 +8,7 @@ import { supabase, getUserStorageStats, getUserSubscription, canUploadMoreVideos
 import { CheckCircle, XCircle, ArrowRight, Crown, Upload, HardDrive, Loader2, RefreshCw } from 'lucide-react';
 import { toast } from 'react-hot-toast'; // Add this package if you don't have it
 import Link from 'next/link';
+import {subscription} from "swr/subscription";
 
 // Plan types
 interface PlanFeature {
@@ -500,6 +501,8 @@ export default function ManagePlanPage() {
                 setProcessingPayment(false);
             }
         }
+        // In your manage-plan/page.tsx
+        console.log("Raw subscription data from DB:", subscription);
     };
 
     if (status === "loading" || (loading && !loadAttempted)) {

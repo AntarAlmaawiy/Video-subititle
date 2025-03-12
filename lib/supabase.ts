@@ -26,7 +26,6 @@ export const signUpWithEmail = async (email: string, password: string, username:
 };
 
 // Get user's subscription plan from database
-// Replace your getUserSubscription function with this improved version
 export const getUserSubscription = async (userId: string) => {
     try {
         console.log(`Fetching subscription for user: ${userId}`);
@@ -36,14 +35,13 @@ export const getUserSubscription = async (userId: string) => {
             return getDefaultSubscription();
         }
 
-        // First try a simpler query without the join to see if we can get the basic subscription
+        // First try a simpler query with the public client
         const { data: subData, error: subError } = await supabase
             .from('user_subscriptions')
             .select('*')
             .eq('user_id', userId)
             .single();
 
-        // If we got basic subscription data, now try to get the plan details separately
         if (!subError && subData) {
             console.log('Found subscription record:', subData);
 
@@ -66,18 +64,11 @@ export const getUserSubscription = async (userId: string) => {
                 console.error('Error fetching plan details:', planFetchError);
             }
 
-            // Return subscription data even if we couldn't get plan details
             return subData;
         }
 
-        // If no subscription found, return free plan defaults
-        if (subError && subError.code === 'PGRST116') {
-            console.log('No subscription found, defaulting to free plan');
-            return getDefaultSubscription();
-        }
-
-        // For other errors, log but return a default subscription
-        console.error('Error fetching subscription:', subError);
+        // Return free plan defaults if no subscription found
+        console.log('No subscription found, returning default free plan');
         return getDefaultSubscription();
     } catch (error) {
         console.error('Error in getUserSubscription:', error);
@@ -85,7 +76,6 @@ export const getUserSubscription = async (userId: string) => {
     }
 };
 
-// Helper function to create a default subscription object
 function getDefaultSubscription() {
     return {
         plan_id: 'free',
@@ -97,6 +87,7 @@ function getDefaultSubscription() {
 }
 
 // Update or create a user's subscription in the database
+// This is a server-side only function - it should only be called from API routes
 export const upsertUserSubscription = async (
     userId: string,
     subscriptionData: {
@@ -108,131 +99,12 @@ export const upsertUserSubscription = async (
         billing_cycle?: 'monthly' | 'yearly';
     }
 ) => {
-    try {
-        console.log(`Upserting subscription for user ${userId}:`, JSON.stringify(subscriptionData));
-
-        if (!userId) {
-            throw new Error('Invalid user ID provided');
-        }
-
-        // Check if subscription exists with detailed error handling
-        const { data: existingSubscription, error: checkError } = await supabase
-            .from('user_subscriptions')
-            .select('*')
-            .eq('user_id', userId)
-            .single();
-
-        if (checkError) {
-            if (checkError.code !== 'PGRST116') {
-                // This is a real error, not just "no rows returned"
-                console.error('Error checking for existing subscription:', checkError.code, checkError.message);
-                // Continue anyway rather than throwing - we'll try to insert
-            } else {
-                console.log(`No existing subscription found for user ${userId}, will create new one`);
-            }
-        } else {
-            console.log(`Found existing subscription for user ${userId}:`, existingSubscription?.plan_id);
-        }
-
-        // Prepare the update data
-        const updateData = {
-            plan_id: subscriptionData.plan_id,
-            status: subscriptionData.status,
-            user_id: userId,
-            updated_at: new Date().toISOString()
-        } as any;
-
-        // Add optional fields if provided
-        if (subscriptionData.next_billing_date) {
-            updateData.next_billing_date = subscriptionData.next_billing_date;
-        }
-
-        // Handle null values explicitly for stripe_subscription_id
-        if (subscriptionData.stripe_subscription_id === null) {
-            updateData.stripe_subscription_id = null;
-        } else if (subscriptionData.stripe_subscription_id) {
-            updateData.stripe_subscription_id = subscriptionData.stripe_subscription_id;
-        }
-
-        // Handle null values explicitly for stripe_customer_id
-        if (subscriptionData.stripe_customer_id === null) {
-            updateData.stripe_customer_id = null;
-        } else if (subscriptionData.stripe_customer_id) {
-            updateData.stripe_customer_id = subscriptionData.stripe_customer_id;
-        }
-
-        if (subscriptionData.billing_cycle) {
-            updateData.billing_cycle = subscriptionData.billing_cycle;
-        }
-
-        let result;
-
-        if (existingSubscription) {
-            // Update existing subscription
-            console.log(`Updating existing subscription for user ${userId} to plan ${subscriptionData.plan_id}`);
-            const { data, error: updateError } = await supabase
-                .from('user_subscriptions')
-                .update(updateData)
-                .eq('user_id', userId)
-                .select();
-
-            if (updateError) {
-                console.error('Error updating subscription:', updateError.code, updateError.message);
-                throw new Error(`Database update failed: ${updateError.message}`);
-            }
-
-            result = data;
-            console.log(`Subscription updated successfully:`, data);
-        } else {
-            // Insert new subscription
-            console.log(`Creating new subscription for user ${userId} with plan ${subscriptionData.plan_id}`);
-
-            const insertData = {
-                ...updateData,
-                created_at: new Date().toISOString()
-            };
-
-            console.log('Insert data for subscription:', JSON.stringify(insertData));
-
-            const { data, error: insertError } = await supabase
-                .from('user_subscriptions')
-                .insert(insertData)
-                .select();
-
-            if (insertError) {
-                console.error('Error inserting subscription:', insertError.code, insertError.message);
-                throw new Error(`Database insert failed: ${insertError.message}`);
-            }
-
-            result = data;
-            console.log(`Subscription created successfully:`, data);
-        }
-
-        // Directly verify the database state after update
-        const { data: verifyData, error: verifyError } = await supabase
-            .from('user_subscriptions')
-            .select('*')
-            .eq('user_id', userId)
-            .single();
-
-        if (verifyError) {
-            console.error('Error verifying subscription after update:', verifyError);
-        } else {
-            console.log('Verified subscription in database after update:', verifyData);
-        }
-
-        return { success: true, data: result };
-    } catch (error) {
-        // Ensure we're logging the full error
-        console.error('Error upserting user subscription:', error);
-        if (error instanceof Error) {
-            console.error('Error details:', error.message, error.stack);
-        }
-        throw error;
-    }
+    // This will be implemented in the API routes using the admin client
+    console.error('upsertUserSubscription should not be called from client code');
+    throw new Error('This function can only be called from server-side code');
 };
 
-// Update user's subscription in database - Legacy function maintained for compatibility
+// Legacy function maintained for compatibility
 export const updateUserSubscription = async (
     userId: string,
     subscriptionData: {
@@ -243,13 +115,8 @@ export const updateUserSubscription = async (
         stripe_customer_id?: string | null;
     }
 ) => {
-    console.log('Legacy updateUserSubscription called, forwarding to upsertUserSubscription', {
-        userId,
-        subscriptionData
-    });
-
-    // Forward to the new, more robust function
-    return await upsertUserSubscription(userId, subscriptionData);
+    console.error('updateUserSubscription should not be called from client code');
+    throw new Error('This function can only be called from server-side code');
 };
 
 // Video storage functions
@@ -744,7 +611,6 @@ export const getUserDailyVideoUsage = async (userId: string) => {
     }
 };
 
-// Check if user can upload more videos today based on their subscription
 // Check if user can upload more videos today based on their subscription
 export const canUploadMoreVideos = async (userId: string) => {
     try {
