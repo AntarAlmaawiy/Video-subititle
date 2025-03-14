@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useState, useCallback, useRef } from "react"
 import { useSession } from "next-auth/react"
 import { getUserStorageStats, getUserSubscription } from "@/lib/supabase"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -28,6 +28,7 @@ interface UserSubscription {
 }
 
 const COLORS = ["#0088FE", "#00C49F", "#FFBB28", "#FF8042", "#8884d8"]
+const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes cache
 
 export default function StorageDashboard() {
     const { data: session } = useSession()
@@ -36,20 +37,48 @@ export default function StorageDashboard() {
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState<string | null>(null)
 
+    // Cache control
+    const lastFetchRef = useRef<number>(0)
+
+    // Format bytes utility function
+    const formatBytes = useCallback((bytes: number) => {
+        if (bytes === 0) return "0 Bytes"
+        const k = 1024
+        const sizes = ["Bytes", "KB", "MB", "GB"]
+        const i = Math.floor(Math.log(bytes) / Math.log(k))
+        return Number.parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i]
+    }, [])
+
+    // Fetch storage stats with caching
     useEffect(() => {
         const fetchStorageStats = async () => {
             if (!session?.user?.id) return
 
             try {
+                // Check cache validity
+                const now = Date.now()
+                const shouldRefetch = now - lastFetchRef.current > CACHE_DURATION || !stats
+
+                if (!shouldRefetch && stats && subscription) {
+                    console.log("Using cached storage data")
+                    setLoading(false)
+                    return
+                }
+
                 setLoading(true)
+                console.log("Fetching storage data from API...")
 
-                // Get user's subscription first
-                const userSubscription = await getUserSubscription(session.user.id)
+                // Fetch data in parallel
+                const [userSubscription, storageStats] = await Promise.all([
+                    getUserSubscription(session.user.id),
+                    getUserStorageStats(session.user.id)
+                ])
+
                 setSubscription(userSubscription)
-
-                // Then get storage stats (which will use the correct plan limits)
-                const storageStats = await getUserStorageStats(session.user.id)
                 setStats(storageStats)
+
+                // Update cache timestamp
+                lastFetchRef.current = now
             } catch (err: any) {
                 console.error("Error fetching storage stats:", err)
                 setError(err.message || "Failed to load storage statistics")
@@ -59,7 +88,12 @@ export default function StorageDashboard() {
         }
 
         fetchStorageStats()
-    }, [session?.user?.id])
+    }, [session?.user?.id, stats])
+
+    // Memoized values
+    const storageUsedPercent = stats ? Math.round((stats.usedStorage / stats.maxStorage) * 100) : 0
+    const isStorageAlmostFull = storageUsedPercent > 80
+    const averageSize = stats && stats.videoCount > 0 ? stats.totalSize / stats.videoCount : 0
 
     if (loading) {
         return (
@@ -80,17 +114,6 @@ export default function StorageDashboard() {
             </div>
         )
     }
-
-    const storageUsedPercent = Math.round((stats.usedStorage / stats.maxStorage) * 100)
-    const formatBytes = (bytes: number) => {
-        if (bytes === 0) return "0 Bytes"
-        const k = 1024
-        const sizes = ["Bytes", "KB", "MB", "GB"]
-        const i = Math.floor(Math.log(bytes) / Math.log(k))
-        return Number.parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i]
-    }
-
-    const isStorageAlmostFull = storageUsedPercent > 80
 
     return (
         <div className="container mx-auto px-4 py-8">
@@ -180,9 +203,9 @@ export default function StorageDashboard() {
                     </CardHeader>
                     <CardContent className="flex items-center justify-center">
                         <div className="text-center">
-              <span className="text-3xl font-bold">
-                {stats.videoCount > 0 ? formatBytes(stats.totalSize / stats.videoCount) : "0 MB"}
-              </span>
+                            <span className="text-3xl font-bold">
+                                {stats.videoCount > 0 ? formatBytes(averageSize) : "0 MB"}
+                            </span>
                             <p className="text-sm text-gray-500 mt-2">per video</p>
                         </div>
                     </CardContent>
@@ -255,4 +278,3 @@ export default function StorageDashboard() {
         </div>
     )
 }
-

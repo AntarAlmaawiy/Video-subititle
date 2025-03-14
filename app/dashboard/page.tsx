@@ -23,7 +23,7 @@ export default async function DashboardPage() {
                 <DashboardCard
                     title="Subtitle Generator"
                     description="Create and edit subtitles for your videos"
-                    link="/app/subtitle-generator"
+                    link="/dashboard/subtitle-generator"
                 />
                 <DashboardCard
                     title="Storage"

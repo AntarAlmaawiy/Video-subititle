@@ -46,13 +46,16 @@ const Navbar = () => {
                                 Features
                             </Link>
 
-                            <Link href="/get-started" className="text-gray-700 hover:text-gray-900">Get Started</Link>
-
-                            {/* Show Pricing for Logged-Out Users & Manage Plan for Logged-In Users */}
                             {!isAuthenticated ? (
-                                <Link href="/pricing" className="text-gray-700 hover:text-gray-900">Pricing</Link>
+                                <>
+                                    <Link href="/get-started" className="text-gray-700 hover:text-gray-900">Get Started</Link>
+                                    <Link href="/pricing" className="text-gray-700 hover:text-gray-900">Pricing</Link>
+                                </>
                             ) : (
-                                <Link href="/manage-plan" className="text-gray-700 hover:text-gray-900">Manage Plan</Link>
+                                <>
+                                    <Link href="/manage-plan" className="text-gray-700 hover:text-gray-900">Manage Plan</Link>
+                                    <Link href="/dashboard" className="text-gray-700 hover:text-gray-900">Dashboard</Link>
+                                </>
                             )}
                         </div>
                     </div>
@@ -136,21 +139,23 @@ const Navbar = () => {
                         >
                             Features
                         </Link>
-                        <Link
-                            href="/get-started"
-                            className="block px-3 py-2 rounded-md text-base font-medium text-gray-700 hover:text-gray-900 hover:bg-gray-50"
-                            onClick={toggleMenu}
-                        >
-                            Get Started
-                        </Link>
                         {!isAuthenticated ? (
-                            <Link
-                                href="/pricing"
-                                className="block px-3 py-2 rounded-md text-base font-medium text-gray-700 hover:text-gray-900 hover:bg-gray-50"
-                                onClick={toggleMenu}
-                            >
-                                Pricing
-                            </Link>
+                            <>
+                                <Link
+                                    href="/get-started"
+                                    className="block px-3 py-2 rounded-md text-base font-medium text-gray-700 hover:text-gray-900 hover:bg-gray-50"
+                                    onClick={toggleMenu}
+                                >
+                                    Get Started
+                                </Link>
+                                <Link
+                                    href="/pricing"
+                                    className="block px-3 py-2 rounded-md text-base font-medium text-gray-700 hover:text-gray-900 hover:bg-gray-50"
+                                    onClick={toggleMenu}
+                                >
+                                    Pricing
+                                </Link>
+                            </>
                         ) : (
                             <>
                                 <Link
@@ -159,6 +164,13 @@ const Navbar = () => {
                                     onClick={toggleMenu}
                                 >
                                     Manage Plan
+                                </Link>
+                                <Link
+                                    href="/dashboard"
+                                    className="block px-3 py-2 rounded-md text-base font-medium text-gray-700 hover:text-gray-900 hover:bg-gray-50"
+                                    onClick={toggleMenu}
+                                >
+                                    Dashboard
                                 </Link>
                                 <Link
                                     href="/subtitle-generator"

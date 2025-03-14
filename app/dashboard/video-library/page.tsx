@@ -1,7 +1,7 @@
 // app/dashboard/video-library/page.tsx
 "use client";
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { useSession } from 'next-auth/react';
 import { getUserVideos, deleteUserVideo, forceDownloadFile, getUserSubscription, canUploadMoreVideos } from '@/lib/supabase';
 import Link from 'next/link';
@@ -45,16 +45,49 @@ export default function VideoLibraryPage() {
     });
     const [timeRemaining, setTimeRemaining] = useState<string>('');
 
+    // Cache control
+    const lastFetchRef = useRef<number>(0);
+    const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
+    const timerIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+    // Update the remaining time display and return if timer is still valid
+    const updateRemainingTime = useCallback((nextTime: Date): boolean => {
+        const now = new Date();
+        if (now >= nextTime) {
+            setTimeRemaining('');
+            return false;
+        }
+
+        setTimeRemaining(formatDistanceToNow(nextTime, { addSuffix: true }));
+        return true;
+    }, []);
+
+    // Fetch data with caching
     useEffect(() => {
         const fetchData = async () => {
             if (!session?.user?.id) return;
 
             try {
-                setLoading(true);
-                console.log("Fetching user videos and plan data...");
+                // Check cache validity
+                const now = Date.now();
+                const shouldRefetch = now - lastFetchRef.current > CACHE_DURATION || videos.length === 0;
 
-                // Get videos first - critical for the page
-                const userVideos = await getUserVideos(session.user.id);
+                if (!shouldRefetch) {
+                    console.log("Using cached video data");
+                    setLoading(false);
+                    return;
+                }
+
+                setLoading(true);
+                console.log("Fetching data from API...");
+
+                // Fetch all data in parallel
+                const [userVideos, subscription, limits] = await Promise.all([
+                    getUserVideos(session.user.id),
+                    getUserSubscription(session.user.id),
+                    canUploadMoreVideos(session.user.id)
+                ]);
+
                 console.log(`Retrieved ${userVideos.length} videos`);
 
                 // Make sure we have valid data
@@ -62,8 +95,10 @@ export default function VideoLibraryPage() {
                     video && video.id && video.file_path && video.publicUrl
                 );
 
-                console.log(`Valid videos: ${validVideos.length}`);
+                // Update state with fetched data
                 setVideos(validVideos);
+                setCurrentPlan(subscription.plan_id);
+                setUploadLimits(limits);
 
                 // Auto-select the first video if available
                 if (validVideos.length > 0 && !selectedVideo) {
@@ -71,37 +106,16 @@ export default function VideoLibraryPage() {
                     setSelectedVideo(validVideos[0]);
                 }
 
-                // Now get the plan information - less critical for immediate display
-                try {
-                    // Get user's subscription
-                    const subscription = await getUserSubscription(session.user.id);
-                    setCurrentPlan(subscription.plan_id);
-
-                    // Get upload limits
-                    const limits = await canUploadMoreVideos(session.user.id);
-                    setUploadLimits(limits);
-
-                    // Calculate time remaining
-                    if (limits.nextUploadTime) {
-                        updateRemainingTime(limits.nextUploadTime);
-
-                        // Update timer every minute
-                        const timerInterval = setInterval(() => {
-                            if (limits.nextUploadTime) {
-                                const stillValid = updateRemainingTime(limits.nextUploadTime);
-                                if (!stillValid) clearInterval(timerInterval);
-                            }
-                        }, 60000);
-
-                        return () => clearInterval(timerInterval);
-                    }
-                } catch (planError) {
-                    console.error("Error loading plan information:", planError);
-                    // This error is non-critical, we still have videos
+                // Set up timer for time remaining
+                if (limits.nextUploadTime) {
+                    updateRemainingTime(limits.nextUploadTime);
                 }
 
+                // Update cache timestamp
+                lastFetchRef.current = now;
+
             } catch (err: any) {
-                console.error('Error fetching videos:', err);
+                console.error('Error fetching data:', err);
                 const errorMessage = err instanceof Error ? err.message : 'Failed to load your videos';
                 setError(errorMessage);
 
@@ -115,30 +129,51 @@ export default function VideoLibraryPage() {
         };
 
         fetchData();
-    }, [session?.user?.id]);
+    }, [session?.user?.id, selectedVideo, updateRemainingTime, videos.length]);
 
-    // Update the remaining time display and return if timer is still valid
-    const updateRemainingTime = (nextTime: Date): boolean => {
-        const now = new Date();
-        if (now >= nextTime) {
-            setTimeRemaining('');
-            return false;
+    // Set up timer interval for next upload time
+    useEffect(() => {
+        // Clear any existing timer
+        if (timerIntervalRef.current) {
+            clearInterval(timerIntervalRef.current);
+            timerIntervalRef.current = null;
         }
 
-        setTimeRemaining(formatDistanceToNow(nextTime, { addSuffix: true }));
-        return true;
-    };
+        // Set up new timer if we have a nextUploadTime
+        if (uploadLimits.nextUploadTime) {
+            timerIntervalRef.current = setInterval(() => {
+                const stillValid = updateRemainingTime(uploadLimits.nextUploadTime!);
+                if (!stillValid && timerIntervalRef.current) {
+                    clearInterval(timerIntervalRef.current);
+                    timerIntervalRef.current = null;
+                }
+            }, 60000); // Check every minute
+        }
 
-    const handleDeleteVideo = async (video: Video) => {
+        // Cleanup
+        return () => {
+            if (timerIntervalRef.current) {
+                clearInterval(timerIntervalRef.current);
+                timerIntervalRef.current = null;
+            }
+        };
+    }, [uploadLimits.nextUploadTime, updateRemainingTime]);
+
+    const handleDeleteVideo = useCallback(async (video: Video) => {
         if (!session?.user?.id) return;
         if (!confirm('Are you sure you want to delete this video?')) return;
 
         try {
             setIsDeleting(true);
             await deleteUserVideo(session.user.id, video.id, video.file_path);
-            setVideos(videos.filter(v => v.id !== video.id));
+
+            // Update videos state
+            setVideos(prevVideos => prevVideos.filter(v => v.id !== video.id));
+
+            // Update selected video if needed
             if (selectedVideo?.id === video.id) {
-                setSelectedVideo(videos.length > 1 ? videos.find(v => v.id !== video.id) || null : null);
+                const remainingVideos = videos.filter(v => v.id !== video.id);
+                setSelectedVideo(remainingVideos.length > 0 ? remainingVideos[0] : null);
             }
 
             // Refresh upload limits after deleting
@@ -150,9 +185,9 @@ export default function VideoLibraryPage() {
         } finally {
             setIsDeleting(false);
         }
-    };
+    }, [session?.user?.id, selectedVideo, videos]);
 
-    const handleDownloadVideo = async (video: Video) => {
+    const handleDownloadVideo = useCallback(async (video: Video) => {
         try {
             setIsDownloading(true);
             await forceDownloadFile(video.file_path, video.file_name);
@@ -162,14 +197,19 @@ export default function VideoLibraryPage() {
         } finally {
             setIsDownloading(false);
         }
-    };
+    }, []);
+
+    // Memoize video selection handler
+    const handleSelectVideo = useCallback((video: Video) => {
+        setSelectedVideo(video);
+    }, []);
 
     return (
         <div className="container mx-auto px-4 py-8">
             <div className="flex justify-between items-center mb-6">
                 <h1 className="text-2xl font-bold">Your Video Library</h1>
                 <Link
-                    href="/subtitle-generator"
+                    href="/dashboard/subtitle-generator"
                     className="bg-indigo-600 text-white px-4 py-2 rounded-md hover:bg-indigo-500 flex items-center"
                 >
                     <Plus className="h-4 w-4 mr-1" />
@@ -245,7 +285,7 @@ export default function VideoLibraryPage() {
                                     <li key={video.id} className="p-4 hover:bg-gray-50 cursor-pointer">
                                         <div
                                             className={`flex items-start space-x-3 ${selectedVideo?.id === video.id ? 'bg-indigo-50 rounded-md p-2' : ''}`}
-                                            onClick={() => setSelectedVideo(video)}
+                                            onClick={() => handleSelectVideo(video)}
                                         >
                                             <div className="flex-1 min-w-0">
                                                 <p className="text-sm font-medium text-gray-900 truncate">

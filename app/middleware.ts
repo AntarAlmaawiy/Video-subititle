@@ -10,7 +10,7 @@ export async function middleware(request: NextRequest) {
     if (
         path.startsWith('/api/auth') ||
         path.startsWith('/api/webhook') ||
-        path === '/signing' ||
+        path === '/signin' ||
         path === '/signup' ||
         path === '/' ||
         path.includes('.')

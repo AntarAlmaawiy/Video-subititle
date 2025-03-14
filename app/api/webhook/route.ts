@@ -41,6 +41,11 @@ export async function POST(request: Request) {
         }
 
         const adminSupabase = getAdminSupabase();
+        // Add to your webhook handler
+        if (event.type === 'checkout.session.completed') {
+            // Write to a temp file or log for debugging
+            console.log('WEBHOOK EVENT:', JSON.stringify(event, null, 2));
+        }
 
         switch (event.type) {
             case 'checkout.session.completed': {

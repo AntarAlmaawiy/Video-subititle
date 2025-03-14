@@ -52,7 +52,6 @@ export default function ManagePlanPage() {
     const [error, setError] = useState<string | null>(null);
     const [processingPayment, setProcessingPayment] = useState(false);
     const [loadAttempted, setLoadAttempted] = useState(false);
-
     // Current subscription state
     const [currentSubscription, setCurrentSubscription] = useState<UserSubscription>({
         plan: 'free',

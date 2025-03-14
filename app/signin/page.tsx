@@ -1,4 +1,3 @@
-// app/signin/page.tsx
 "use client";
 
 import { signIn } from "next-auth/react";
@@ -7,6 +6,7 @@ import { useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
+import { ArrowLeft } from "lucide-react"; // Import ArrowLeft icon
 
 export default function SignInPage() {
     const router = useRouter();
@@ -143,6 +143,14 @@ export default function SignInPage() {
 
     return (
         <div className="flex min-h-screen flex-col items-center justify-center py-12 px-4 sm:px-6 lg:px-8 bg-gray-50">
+            {/* Go Back Button - Added at the top */}
+            <div className="absolute top-4 left-4">
+                <Link href="/" className="flex items-center text-gray-600 hover:text-gray-900">
+                    <ArrowLeft className="h-5 w-5 mr-1" />
+                    <span>Go Back</span>
+                </Link>
+            </div>
+
             <div className="w-full max-w-md space-y-8">
                 <div className="flex flex-col items-center">
                     <Link href="/">
@@ -213,22 +221,6 @@ export default function SignInPage() {
                         </button>
                     </div>
                 </form>
-
-                {/* Debug button */}
-                <div className="text-center">
-                    <button
-                        type="button"
-                        onClick={handleDirectSignIn}
-                        className="text-xs text-gray-500 underline"
-                    >
-                        Test Direct Supabase Sign In
-                    </button>
-                    {debug && (
-                        <div className="mt-2 p-2 bg-gray-100 text-xs text-left whitespace-pre-wrap rounded">
-                            {debug}
-                        </div>
-                    )}
-                </div>
 
                 <div className="mt-6 relative">
                     <div className="absolute inset-0 flex items-center">
