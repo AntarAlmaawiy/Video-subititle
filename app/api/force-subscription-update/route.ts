@@ -8,6 +8,9 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || '', {
     apiVersion: '2025-02-24.acacia',
 });
 
+// Define the custom status type to include our "canceling" status
+type ExtendedStatus = Stripe.Subscription.Status | 'canceling';
+
 export async function GET() {
     try {
         const session = await auth();
@@ -39,6 +42,36 @@ export async function GET() {
                 console.log(`Fetching subscription ${currentSub.stripe_subscription_id} from Stripe`);
                 const subscription = await stripe.subscriptions.retrieve(currentSub.stripe_subscription_id);
                 console.log(`Stripe subscription status: ${subscription.status}`);
+                console.log(`Stripe cancel_at_period_end: ${subscription.cancel_at_period_end}`);
+
+                // Check if this subscription is set to cancel at period end in Stripe
+                // In app/api/force-subscription-update/route.ts
+// Find the section where you check for cancel_at_period_end
+
+                if (subscription.cancel_at_period_end) {
+                    console.log(`Subscription ${subscription.id} is marked for cancellation in Stripe`);
+
+                    // Use 'canceled' instead of 'canceling'
+                    const { data: cancelData, error: cancelError } = await adminSupabase
+                        .from('user_subscriptions')
+                        .update({
+                            status: 'canceled' as any, // Changed from 'canceling'
+                            updated_at: new Date().toISOString()
+                        })
+                        .eq('user_id', session.user.id)
+                        .select();
+
+                    if (cancelError) {
+                        console.error(`Error updating to canceled status: ${cancelError.message}`);
+                    } else {
+                        console.log('Successfully set status to canceled');
+                        return NextResponse.json({
+                            success: true,
+                            message: 'Status updated to canceled based on Stripe cancel_at_period_end flag',
+                            subscription: cancelData[0]
+                        });
+                    }
+                }
 
                 // Check if this is a recent upgrade (within last 10 minutes)
                 const isRecentUpdate = currentSub.updated_at &&
@@ -137,12 +170,19 @@ export async function GET() {
                     planSource = 'preserved elite plan';
                 }
 
-                // Update the subscription
+                // Special handling for subscriptions marked for cancellation
+                let statusToUse: ExtendedStatus = subscription.status;
+                if (subscription.cancel_at_period_end) {
+                    statusToUse = 'canceling' as ExtendedStatus;
+                    console.log('Setting status to "canceling" because cancel_at_period_end is true');
+                }
+
+                // Update the subscription with appropriate type handling
                 const { data, error } = await adminSupabase
                     .from('user_subscriptions')
                     .update({
                         plan_id: stripePlanId,
-                        status: subscription.status,
+                        status: statusToUse as any, // Type assertion to bypass TypeScript check
                         next_billing_date: new Date(subscription.current_period_end * 1000).toISOString().split('T')[0],
                         updated_at: new Date().toISOString()
                     })

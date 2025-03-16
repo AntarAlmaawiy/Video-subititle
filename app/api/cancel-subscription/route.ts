@@ -67,13 +67,12 @@ export async function POST(request: Request) {
 
             console.log(`Subscription updated in Stripe, status: ${canceledSubscription.status}, cancel_at_period_end: ${canceledSubscription.cancel_at_period_end}`);
 
-            // The important part: Set a custom "canceling" status in our database
-            // This allows us to show "canceling" in the UI while Stripe still shows "active"
+            // Update only this specific user's subscription
             const { data, error: updateError } = await adminSupabase
                 .from('user_subscriptions')
                 .update({
-                    status: 'canceling', // Custom status to show in UI
-                    updated_at: new Date().toISOString(),
+                    status: 'canceled',  // Use 'canceled' not 'canceling'
+                    updated_at: new Date().toISOString()
                 })
                 .eq('user_id', userId)
                 .select();
@@ -86,24 +85,68 @@ export async function POST(request: Request) {
                 );
             }
 
-            // Double-check to make sure the update was actually applied
-            const { data: verifyUpdate, error: verifyError } = await adminSupabase
+            // Verify the update was actually applied
+            const { data: verifyData, error: verifyError } = await adminSupabase
                 .from('user_subscriptions')
                 .select('status')
                 .eq('user_id', userId)
                 .single();
 
             if (verifyError) {
-                console.error('Error verifying update:', verifyError);
+                console.error('Error verifying status update:', verifyError);
             } else {
-                console.log('Verified database status after update:', verifyUpdate.status);
+                console.log(`Verified database status: ${verifyData.status}`);
+
+                // If verification shows it's still not canceled, try a second update
+                if (verifyData.status !== 'canceled') {
+                    console.error('Status not updated to canceled, trying one more time');
+
+                    const { error: finalError } = await adminSupabase
+                        .from('user_subscriptions')
+                        .update({
+                            status: 'canceled',
+                            updated_at: new Date().toISOString()
+                        })
+                        .eq('user_id', userId);
+
+                    if (finalError) {
+                        console.error('Final update attempt failed:', finalError);
+                    } else {
+                        console.log('Final update attempt succeeded');
+                    }
+                }
+            }
+
+            const { error: sqlError } = await adminSupabase.rpc(
+                'cancel_user_subscription',
+                { user_id_param: userId }
+            );
+
+            if (sqlError) {
+                console.error('Error executing SQL function:', sqlError);
+
+                // Fall back to direct update
+                const { error: updateError } = await adminSupabase
+                    .from('user_subscriptions')
+                    .update({
+                        status: 'canceled',
+                        updated_at: new Date().toISOString()
+                    })
+                    .eq('user_id', userId);
+
+                if (updateError) {
+                    console.error('Error updating subscription:', updateError);
+                    return NextResponse.json({ message: 'Database update failed' }, { status: 500 });
+                }
+            } else {
+                console.log('Successfully canceled subscription via SQL function');
             }
 
             return NextResponse.json({
                 success: true,
                 message: 'Subscription canceled successfully',
-                willEndOn: userSubscription.next_billing_date,
-                status: 'canceling'
+                status: 'canceled',
+                willEndOn: userSubscription.next_billing_date
             });
         } catch (stripeError: any) {
             console.error('Stripe cancellation error:', stripeError);
@@ -119,4 +162,5 @@ export async function POST(request: Request) {
             { status: 500 }
         );
     }
+
 }

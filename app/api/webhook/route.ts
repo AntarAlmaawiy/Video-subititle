@@ -130,9 +130,13 @@ export async function POST(request: Request) {
 
                     const { data, error: updateError } = await adminSupabase
                         .from('user_subscriptions')
-                        .update(subscriptionData)
+                        .update({
+                            status: 'canceled',  // Use 'canceled' not 'canceling'
+                            updated_at: new Date().toISOString()
+                        })
                         .eq('user_id', userId)
                         .select();
+
 
                     if (updateError) {
                         console.error(`❌ Error updating subscription: ${updateError.message}`);
@@ -153,7 +157,10 @@ export async function POST(request: Request) {
                         .select();
 
                     if (insertError) {
-                        console.error(`❌ Error inserting subscription: ${insertError.message}`);
+                        console.error(`
+                        
+                        
+                    ❌ Error inserting subscription: ${insertError.message}`);
                         return NextResponse.json({ message: insertError.message }, { status: 500 });
                     }
                     result = data;
@@ -232,6 +239,31 @@ export async function POST(request: Request) {
                     } else {
                         console.log(`Current subscription in database: Plan=${currentSub?.plan_id}, Status=${currentSub?.status}, LastUpdated=${currentSub?.updated_at}`);
                     }
+
+                    if (subscription.cancel_at_period_end) {
+                        console.log(`Subscription ${subscription.id} is marked for cancellation. Setting status to canceled.`);
+
+                        // Update with 'canceled' instead of 'canceling'
+                        const { error: updateCancelingError } = await adminSupabase
+                            .from('user_subscriptions')
+                            .update({
+                                status: 'canceled', // Changed from 'canceling'
+                                next_billing_date: nextBillingDate,
+                                updated_at: new Date().toISOString()
+                            })
+                            .eq('user_id', userId);
+
+                        if (updateCancelingError) {
+                            console.error(`Error updating canceled subscription: ${updateCancelingError.message}`);
+                        } else {
+                            console.log(`Successfully updated next billing date for canceled subscription`);
+                        }
+
+                        // Return early to prevent overriding the canceled status
+                        return NextResponse.json({ received: true });
+                    }
+
+                    console.log(`Current subscription in database: Plan=${currentSub?.plan_id}, Status=${currentSub?.status}, LastUpdated=${currentSub?.updated_at}`);
 
                     console.log(`Step 4: Determining plan ID`);
                     // Get plan info from metadata or items

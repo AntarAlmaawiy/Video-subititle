@@ -532,6 +532,12 @@ export default function ManagePlanPage() {
             try {
                 setProcessingPayment(true);
 
+                // Force UI update immediately for better UX
+                setCurrentSubscription(prev => ({
+                    ...prev,
+                    status: 'canceled'  // Use 'canceled' not 'canceling'
+                }));
+
                 // Cancel subscription in your database and with Stripe
                 const response = await fetch('/api/cancel-subscription', {
                     method: 'POST',
@@ -540,30 +546,81 @@ export default function ManagePlanPage() {
                     },
                 });
 
-                if (!response.ok) {
-                    const errorData = await response.json();
-                    throw new Error(errorData.message || 'Failed to cancel subscription');
-                }
+                // First log the raw response for debugging
+                console.log('Raw cancel response:', response);
 
                 const data = await response.json();
-                console.log('Cancellation response:', data);
+                console.log('Cancellation response data:', data);
 
-                // Immediately update UI to show cancellation
-                setCurrentSubscription(prev => ({
-                    ...prev,
-                    status: 'canceling',
-                }));
+                if (!response.ok) {
+                    throw new Error(data.message || 'Failed to cancel subscription');
+                }
 
                 toast.success('Your subscription has been canceled. You will be downgraded to Free at the end of your billing cycle.');
 
                 // Reload the data after a short delay
-                setTimeout(() => {
-                    refreshSubscription();
+                setTimeout(async () => {
+                    await refreshSubscription();
+
+                    // Make sure UI shows canceled status
+                    setCurrentSubscription(prev => ({
+                        ...prev,
+                        status: 'canceled'  // Use 'canceled' not 'canceling'
+                    }));
                 }, 1500);
 
             } catch (err: unknown) {
                 console.error('Error canceling subscription:', err);
                 toast.error(err instanceof Error ? err.message : 'Failed to cancel subscription');
+
+                // Revert UI if there was an error
+                refreshSubscription();
+            } finally {
+                setProcessingPayment(false);
+            }
+        }
+    };
+
+    const handleRenew = async () => {
+        if (!session?.user?.id) return;
+
+        if (confirm('Would you like to renew your subscription? You will not be downgraded at the end of your billing cycle.')) {
+            try {
+                setProcessingPayment(true);
+
+                // Call your renewal API endpoint
+                const response = await fetch('/api/renew-subscription', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.message || 'Failed to renew subscription');
+                }
+
+                // Update UI immediately
+                setCurrentSubscription(prev => ({
+                    ...prev,
+                    status: 'active'
+                }));
+
+                toast.success('Your subscription has been renewed successfully!');
+
+                // Refresh the subscription data
+                setTimeout(() => {
+                    refreshSubscription();
+                }, 1500);
+
+            } catch (err) {
+                console.error('Error renewing subscription:', err);
+                toast.error(err instanceof Error ? err.message : 'Failed to renew subscription');
+
+                // Refresh the subscription data even on error
+                refreshSubscription();
             } finally {
                 setProcessingPayment(false);
             }
@@ -628,16 +685,27 @@ export default function ManagePlanPage() {
                         </div>
                     </div>
                     {currentSubscription.plan !== 'free' && (
-                        <button
-                            className={`mt-6 ${processingPayment
-                                ? 'bg-gray-400 cursor-not-allowed'
-                                : 'bg-red-500 hover:bg-red-600'} text-white py-2 px-6 rounded-md transition-colors font-medium flex items-center`}
-                            onClick={handleCancel}
-                            disabled={processingPayment}
-                        >
-                            {processingPayment && <Loader2 className="animate-spin h-4 w-4 mr-2" />}
-                            Cancel Subscription
-                        </button>
+                        currentSubscription.status === 'canceled' || currentSubscription.status === 'canceling' ? (
+                            <button
+                                className="mt-6 bg-green-500 hover:bg-green-600 text-white py-2 px-6 rounded-md transition-colors font-medium flex items-center"
+                                onClick={handleRenew}
+                                disabled={processingPayment}
+                            >
+                                {processingPayment && <Loader2 className="animate-spin h-4 w-4 mr-2" />}
+                                Renew Subscription
+                            </button>
+                        ) : (
+                            <button
+                                className={`mt-6 ${processingPayment
+                                    ? 'bg-gray-400 cursor-not-allowed'
+                                    : 'bg-red-500 hover:bg-red-600'} text-white py-2 px-6 rounded-md transition-colors font-medium flex items-center`}
+                                onClick={handleCancel}
+                                disabled={processingPayment}
+                            >
+                                {processingPayment && <Loader2 className="animate-spin h-4 w-4 mr-2" />}
+                                Cancel Subscription
+                            </button>
+                        )
                     )}
                 </div>
 
