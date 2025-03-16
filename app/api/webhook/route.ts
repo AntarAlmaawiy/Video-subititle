@@ -1,3 +1,4 @@
+// app/api/webhook/route.ts
 import { NextResponse } from 'next/server';
 import Stripe from 'stripe';
 import { getAdminSupabase } from '@/lib/admin-supabase';
@@ -183,85 +184,156 @@ export async function POST(request: Request) {
             }
 
             case 'customer.subscription.updated': {
-                const subscription = event.data.object as Stripe.Subscription;
-                console.log(`🔄 Processing customer.subscription.updated, ID: ${subscription.id}`);
+                try {
+                    const subscription = event.data.object as Stripe.Subscription;
+                    console.log(`🔄 Processing customer.subscription.updated, ID: ${subscription.id}`);
 
-                // Get metadata
-                console.log(`Subscription metadata:`, subscription.metadata);
+                    // Add detailed logging
+                    console.log(`Subscription metadata:`, subscription.metadata);
 
-                // Get userId from metadata or look it up
-                let userId = subscription.metadata?.userId;
+                    // Log each step
+                    console.log(`Step 1: Finding user for subscription ${subscription.id}`);
 
-                if (!userId) {
-                    // Try to find the user by subscription ID
-                    const { data: userData, error: userError } = await adminSupabase
-                        .from('user_subscriptions')
-                        .select('user_id')
-                        .eq('stripe_subscription_id', subscription.id)
-                        .single();
+                    // Get userId from metadata or look it up
+                    let userId = subscription.metadata?.userId;
 
-                    if (userError) {
-                        console.error(`❌ Cannot find user for subscription ${subscription.id}: ${userError.message}`);
-                        return NextResponse.json({ message: userError.message }, { status: 500 });
+                    if (!userId) {
+                        // Try to find the user by subscription ID
+                        console.log(`User ID not in metadata, looking up by subscription ID`);
+                        const { data: userData, error: userError } = await adminSupabase
+                            .from('user_subscriptions')
+                            .select('user_id, plan_id')
+                            .eq('stripe_subscription_id', subscription.id)
+                            .single();
+
+                        if (userError) {
+                            throw new Error(`Cannot find user for subscription ${subscription.id}: ${userError.message}`);
+                        }
+
+                        userId = userData.user_id;
+                        console.log(`🔍 Found user ${userId} for subscription ${subscription.id} with current plan ${userData.plan_id}`);
                     }
 
-                    userId = userData.user_id;
-                    console.log(`🔍 Found user ${userId} for subscription ${subscription.id}`);
-                }
+                    console.log(`Step 2: Calculating next billing date`);
+                    const nextBillingDate = new Date(subscription.current_period_end * 1000)
+                        .toISOString()
+                        .split('T')[0];
+                    console.log(`Next billing date: ${nextBillingDate}`);
 
-                const nextBillingDate = new Date(subscription.current_period_end * 1000)
-                    .toISOString()
-                    .split('T')[0];
-
-                // Get plan info from metadata or items
-                let planId = subscription.metadata?.planId;
-                if (!planId && subscription.items?.data?.length > 0) {
-                    // Try to extract plan info from the product
-                    const productId = subscription.items.data[0].price.product;
-                    if (typeof productId === 'string') {
-                        const product = await stripe.products.retrieve(productId);
-                        // Look for plan info in product metadata
-                        planId = product.metadata?.planId;
-                        console.log(`Extracted plan ID ${planId} from product ${productId}`);
-                    }
-                }
-
-                // Default to current plan if we couldn't determine it
-                if (!planId) {
-                    const { data: currentSub } = await adminSupabase
+                    console.log(`Step 3: Getting current subscription data from database`);
+                    const { data: currentSub, error: currentSubError } = await adminSupabase
                         .from('user_subscriptions')
-                        .select('plan_id')
+                        .select('plan_id, updated_at, status')
                         .eq('user_id', userId)
                         .single();
 
-                    planId = currentSub?.plan_id || 'pro'; // Default to pro if all else fails
-                    console.log(`Using existing plan ID: ${planId}`);
+                    if (currentSubError && currentSubError.code !== 'PGRST116') {
+                        console.error(`Error fetching current subscription: ${currentSubError.message}`);
+                    } else {
+                        console.log(`Current subscription in database: Plan=${currentSub?.plan_id}, Status=${currentSub?.status}, LastUpdated=${currentSub?.updated_at}`);
+                    }
+
+                    console.log(`Step 4: Determining plan ID`);
+                    // Get plan info from metadata or items
+                    let planId = subscription.metadata?.planId;
+                    let planSource = 'subscription metadata';
+
+                    // Check if this subscription update is from a recent upgrade
+                    const isRecentUpdate = currentSub?.updated_at &&
+                        (new Date().getTime() - new Date(currentSub.updated_at).getTime() < 5 * 60 * 1000); // 5 minutes
+
+                    if (isRecentUpdate) {
+                        console.log(`Recent database update detected (< 5 min ago). Time elapsed: ${Math.round((new Date().getTime() - new Date(currentSub.updated_at).getTime()) / 1000)} seconds`);
+                    }
+
+                    // Special case: If current plan is Elite and we're in a subscription.updated event
+                    // This is often a downgrade attempt after upgrading - we need to protect it
+                    if (isRecentUpdate && currentSub?.plan_id === 'elite') {
+                        console.log(`⚠️ Protecting recent Elite plan upgrade from downgrade`);
+                        planId = 'elite';
+                        planSource = 'protected elite upgrade';
+                    }
+                    // If no plan in metadata, try to extract from product
+                    else if (!planId && subscription.items?.data?.length > 0) {
+                        // Try to extract plan info from the product
+                        const productId = subscription.items.data[0].price.product;
+                        if (typeof productId === 'string') {
+                            try {
+                                const product = await stripe.products.retrieve(productId);
+                                // Look for plan info in product metadata
+                                if (product.metadata?.planId) {
+                                    planId = product.metadata.planId;
+                                    planSource = 'product metadata';
+                                } else if (product.name) {
+                                    // Try to determine from product name
+                                    const name = product.name.toLowerCase();
+                                    if (name.includes('elite')) {
+                                        planId = 'elite';
+                                        planSource = 'product name (elite)';
+                                    }
+                                    else if (name.includes('pro')) {
+                                        planId = 'pro';
+                                        planSource = 'product name (pro)';
+                                    }
+                                    else if (name.includes('free')) {
+                                        planId = 'free';
+                                        planSource = 'product name (free)';
+                                    }
+                                }
+                                console.log(`Extracted plan ID ${planId} from product ${productId} via ${planSource}`);
+                            } catch (err) {
+                                console.error('Error fetching product details:', err);
+                            }
+                        }
+                    }
+
+                    // Default to current plan if we couldn't determine it
+                    if (!planId && currentSub) {
+                        planId = currentSub.plan_id || 'pro'; // Default to pro if all else fails
+                        planSource = 'database (unchanged)';
+                        console.log(`Using existing plan ID: ${planId}`);
+                    } else if (!planId) {
+                        planId = 'pro'; // Absolute fallback
+                        planSource = 'default fallback';
+                        console.log(`Could not determine plan. Using default: ${planId}`);
+                    }
+
+                    console.log(`Step 5: Preparing update data`);
+                    const updateData = {
+                        status: subscription.status,
+                        next_billing_date: nextBillingDate,
+                        plan_id: planId,
+                        updated_at: new Date().toISOString()
+                    };
+                    console.log(`Update data:`, updateData);
+
+                    console.log(`Step 6: Executing database update for user ${userId}`);
+                    const { data, error: updateError } = await adminSupabase
+                        .from('user_subscriptions')
+                        .update(updateData)
+                        .eq('user_id', userId)
+                        .select();
+
+                    if (updateError) {
+                        console.error(`❌ Error updating subscription: ${updateError.message}`, updateError);
+                        throw updateError;
+                    } else {
+                        console.log(`✅ Successfully updated subscription ${subscription.id} to ${planId} via ${planSource}`);
+                        console.log(`Updated data:`, data);
+                    }
+
+                } catch (error: unknown) {
+                    // Catch and log any errors in this specific event handler
+                    const subscriptionError = error as Error;
+                    console.error("💥 Error processing subscription update:", subscriptionError.message);
+                    console.error("Stack trace:", subscriptionError.stack);
+                    // Don't throw - respond with 200 to Stripe and handle the error internally
+                    return NextResponse.json({
+                        received: true,
+                        warning: "Error processing subscription, but acknowledging receipt",
+                        error: subscriptionError.message
+                    });
                 }
-
-                // Update the subscription in the database
-                const updateData = {
-                    status: subscription.status,
-                    next_billing_date: nextBillingDate,
-                    plan_id: planId, // Include plan ID in update
-                    updated_at: new Date().toISOString()
-                };
-
-                console.log(`Updating subscription with data:`, updateData);
-
-                const { data, error: updateError } = await adminSupabase
-                    .from('user_subscriptions')
-                    .update(updateData)
-                    .eq('user_id', userId)
-                    .select();
-
-                if (updateError) {
-                    console.error(`❌ Error updating subscription: ${updateError.message}`);
-                    return NextResponse.json({ message: updateError.message }, { status: 500 });
-                } else {
-                    console.log(`✅ Successfully updated subscription ${subscription.id}`);
-                    console.log(`Updated data:`, data);
-                }
-
                 break;
             }
 

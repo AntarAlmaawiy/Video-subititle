@@ -324,7 +324,7 @@ export default function SubtitleGenerator() {
             setSavedToLibrary(true)
 
             // Reload limits after saving to library
-            loadUserPlanLimits()
+            await loadUserPlanLimits()
         } catch (error: any) {
             console.error("Error saving to library:", error)
             setErrorMessage(`Failed to save to your library: ${error.message}`)

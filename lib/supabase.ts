@@ -26,14 +26,15 @@ export const signUpWithEmail = async (email: string, password: string, username:
 };
 
 // Get user's subscription plan from database
-export const getUserSubscription = async (userId: string) => {
+// In lib/supabase.ts - replace getUserSubscription
+export const getUserSubscription = async (userId?: string) => {
     try {
-        console.log(`Fetching subscription for user: ${userId}`);
-
         if (!userId) {
-            console.error('Invalid user ID provided');
+            console.log('No user ID provided to getUserSubscription, returning default');
             return getDefaultSubscription();
         }
+
+        console.log(`Fetching subscription for user: ${userId}`);
 
         // First try a simpler query with the public client
         const { data: subData, error: subError } = await supabase
