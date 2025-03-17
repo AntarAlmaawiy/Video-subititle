@@ -2,6 +2,8 @@ import './globals.css';
 import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
 import { SessionProvider } from '@/components/SessionProvider';
+import ErrorReportToggle from "@/components/ErrorReportToggle";
+import {Suspense} from "react";
 
 const inter = Inter({
     subsets: ['latin'],
@@ -50,7 +52,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     return (
         <html lang="en" className={inter.variable}>
         <body>
-        <SessionProvider>{children}</SessionProvider>
+        <SessionProvider>
+            {children}
+            <Suspense fallback={null}>
+                <ErrorReportToggle />
+            </Suspense>
+        </SessionProvider>
         </body>
         </html>
     );

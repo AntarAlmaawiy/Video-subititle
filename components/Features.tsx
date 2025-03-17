@@ -12,7 +12,7 @@ const features = [
     {
         name: 'Video Processing',
         description:
-            'Upload local videos or provide links from YouTube, Vimeo, and other platforms for automatic subtitle embedding.',
+            'Upload local videos from Tiktok, Youtube, Instagram and other platforms for automatic subtitle embedding.',
         icon: Video,
     },
     {

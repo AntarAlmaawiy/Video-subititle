@@ -10,6 +10,7 @@ import Footer from '@/components/Footer';
 import VideoDropzone from "@/components/VideoDropzone";
 import LanguageSelector from "@/components/LanguageSelector";
 import ProcessingStatus from "@/components/ProcessingStatus";
+import Pricing from "@/components/Pricing";
 
 export default function Home() {
     const router = useRouter();
@@ -88,6 +89,7 @@ export default function Home() {
                 </div>
 
                 <Features />
+                <Pricing />
                 <Footer />
 
             </div>

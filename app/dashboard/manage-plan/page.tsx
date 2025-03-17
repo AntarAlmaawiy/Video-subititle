@@ -7,7 +7,6 @@ import { useSession } from "next-auth/react";
 import { supabase, getUserStorageStats, getUserSubscription, canUploadMoreVideos } from '@/lib/supabase';
 import { CheckCircle, XCircle, ArrowRight, Crown, Upload, HardDrive, Loader2, RefreshCw } from 'lucide-react';
 import { toast } from 'react-hot-toast'; // Add this package if you don't have it
-import {subscription} from "swr/subscription";
 
 // Plan types
 interface PlanFeature {

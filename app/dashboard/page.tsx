@@ -32,8 +32,8 @@ export default async function DashboardPage() {
                 />
                 <DashboardCard
                     title="Recent Activity"
-                    description="View your recent subtitle projects"
-                    link="/dashboard/activity"
+                    description="View your recent subtitled videos"
+                    link="/dashboard/video-library"
                 />
             </div>
         </div>

@@ -49,8 +49,7 @@ const Navbar = () => {
                             {!isAuthenticated ? (
                                 <>
                                     <Link href="/get-started" className="text-gray-700 hover:text-gray-900">Get Started</Link>
-                                    <Link href="/pricing" className="text-gray-700 hover:text-gray-900">Pricing</Link>
-                                </>
+                                    <Link href="/#pricing" className="text-gray-700 hover:text-gray-900">Pricing</Link>                                </>
                             ) : (
                                 <>
                                     <Link href="/manage-plan" className="text-gray-700 hover:text-gray-900">Manage Plan</Link>
@@ -149,9 +148,13 @@ const Navbar = () => {
                                     Get Started
                                 </Link>
                                 <Link
-                                    href="/pricing"
+                                    href="/#pricing"
                                     className="block px-3 py-2 rounded-md text-base font-medium text-gray-700 hover:text-gray-900 hover:bg-gray-50"
-                                    onClick={toggleMenu}
+                                    onClick={(e) => {
+                                        e.preventDefault();
+                                        toggleMenu();
+                                        document.getElementById('pricing')?.scrollIntoView({ behavior: 'smooth' });
+                                    }}
                                 >
                                     Pricing
                                 </Link>

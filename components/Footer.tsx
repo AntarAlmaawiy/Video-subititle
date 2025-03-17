@@ -20,7 +20,7 @@ const Footer = () => {
                         <h3 className="text-sm font-semibold text-gray-300 tracking-wider uppercase">Quick Links</h3>
                         <ul className="mt-4 space-y-2">
                             <li>
-                                <Link href="/subtitle-generator" className="text-gray-400 hover:text-white">
+                                <Link href="/dashboard/subtitle-generator" className="text-gray-400 hover:text-white">
                                     Subtitle Generator
                                 </Link>
                             </li>

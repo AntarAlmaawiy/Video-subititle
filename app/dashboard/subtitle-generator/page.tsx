@@ -1,4 +1,3 @@
-// app/subtitle-generator/page.tsx
 "use client"
 
 import { useSession } from "next-auth/react"
@@ -23,10 +22,11 @@ export default function SubtitleGenerator() {
     const isLoaded = status !== "loading"
     const isSignedIn = status === "authenticated"
     const router = useRouter()
+    const [loading, setLoading] = useState(true)
 
     // State for video processing
     const [videoSource, setVideoSource] = useState<VideoSource>(null)
-    const [sourceType, setSourceType] = useState<"file" | "link" | null>(null)
+    const [sourceType, setSourceType] = useState<"file" | null>(null)
     const [sourceLanguage, setSourceLanguage] = useState("auto")
     const [targetLanguage, setTargetLanguage] = useState("en")
     const [processingState, setProcessingState] = useState<ProcessingState>("idle")
@@ -64,10 +64,15 @@ export default function SubtitleGenerator() {
     const [isTimerActive, setIsTimerActive] = useState(false)
 
     useEffect(() => {
+        setLoading(true)
         if (isLoaded && !isSignedIn) {
             router.push("/signin?callbackUrl=/subtitle-generator")
         } else if (isSignedIn && session?.user?.id) {
-            loadUserPlanLimits()
+            loadUserPlanLimits().finally(() => {
+                setLoading(false)
+            })
+        } else if (isLoaded) {
+            setLoading(false)
         }
     }, [isLoaded, isSignedIn, router, session?.user?.id])
 
@@ -160,12 +165,12 @@ export default function SubtitleGenerator() {
             return () => {
                 URL.revokeObjectURL(url)
             }
-        } else if (typeof videoSource === "string" && sourceType === "link") {
+        } else if (typeof videoSource === "string") {
             setOriginalVideoUrl(videoSource)
         }
     }, [videoSource, sourceType])
 
-    const handleVideoSelected = (source: File | string, type: "file" | "link") => {
+    const handleVideoSelected = (source: File, type: "file") => {
         setVideoSource(source)
         setSourceType(type)
         setErrorMessage(null)
@@ -206,22 +211,6 @@ export default function SubtitleGenerator() {
                 response = await fetch(`${VIDEO_PROCESSING_API}/api/process-video`, {
                     method: "POST",
                     body: formData,
-                })
-            } else if (sourceType === "link" && typeof videoSource === "string") {
-                // For video links
-                setProcessingProgress(20)
-                setProcessingState("processing")
-
-                response = await fetch(`${VIDEO_PROCESSING_API}/api/process-youtube`, {
-                    method: "POST",
-                    headers: {
-                        "Content-Type": "application/json",
-                    },
-                    body: JSON.stringify({
-                        videoUrl: videoSource,
-                        sourceLanguage,
-                        targetLanguage,
-                    }),
                 })
             } else {
                 throw new Error("Invalid video source")
@@ -345,7 +334,8 @@ export default function SubtitleGenerator() {
         }
     }, [processingState, processingProgress])
 
-    if (!isLoaded || !isSignedIn) {
+    // Show loading UI for both cases
+    if (loading || status === "loading" || !isLoaded || !isSignedIn) {
         return (
             <div className="flex justify-center items-center min-h-screen">
                 <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-indigo-500"></div>
@@ -360,7 +350,7 @@ export default function SubtitleGenerator() {
                     <div className="text-center">
                         <h1 className="text-3xl font-extrabold text-gray-900 sm:text-4xl">Video Subtitle Translator</h1>
                         <p className="mt-3 max-w-md mx-auto text-base text-gray-500 sm:text-lg">
-                            Upload a video or provide a link, and we&#39;ll automatically translate and embed subtitles.
+                            Upload a video, and we&#39;ll automatically translate and embed subtitles.
                         </p>
                     </div>
 
