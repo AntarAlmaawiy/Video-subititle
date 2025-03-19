@@ -42,11 +42,9 @@ const Pricing = () => {
                 { name: '1 free video translate per day', included: true },
                 { name: '500MB storage', included: true },
                 { name: 'Basic subtitle editing', included: true },
-                { name: 'Support for 10 languages', included: true },
+                { name: 'Support for 100+ languages', included: true },
                 { name: 'Standard quality AI', included: true },
                 { name: 'Email support', included: true },
-                { name: 'Premium templates', included: false },
-                { name: 'Batch processing', included: false },
             ]
         },
         {
@@ -61,11 +59,9 @@ const Pricing = () => {
                 { name: '5 video translates per day', included: true },
                 { name: '15GB storage', included: true },
                 { name: 'Advanced subtitle editing', included: true },
-                { name: 'Support for 40 languages', included: true },
+                { name: 'Support for 100+ languages', included: true },
                 { name: 'Enhanced quality AI', included: true },
                 { name: 'Priority email support', included: true },
-                { name: 'Premium templates', included: true },
-                { name: 'Batch processing', included: false },
             ],
             recommended: true
         },
@@ -84,8 +80,6 @@ const Pricing = () => {
                 { name: 'Support for 100+ languages', included: true },
                 { name: 'Premium quality AI', included: true },
                 { name: 'Priority 24/7 support', included: true },
-                { name: 'Premium templates', included: true },
-                { name: 'Batch processing', included: true },
             ]
         },
     ];
@@ -196,13 +190,6 @@ const Pricing = () => {
                             </div>
                         </div>
                     ))}
-                </div>
-
-                <div className="text-center mt-12">
-                    <p className="text-gray-600 mb-4">Have questions about our plans? Contact us for more information.</p>
-                    <button onClick={() => {}} className="text-blue-600 hover:text-blue-800 font-medium">
-                        Contact Sales
-                    </button>
                 </div>
             </div>
         </section>
