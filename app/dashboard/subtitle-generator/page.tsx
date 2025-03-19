@@ -15,7 +15,7 @@ type VideoSource = File | string | null
 type ProcessingState = "idle" | "uploading" | "processing" | "downloading" | "completed" | "error"
 
 // Replace with your standalone API service URL
-const VIDEO_PROCESSING_API = "http://localhost:3001"
+const VIDEO_PROCESSING_API = process.env.NEXT_PUBLIC_VIDEO_PROCESSING_API || "http://localhost:3001"
 
 export default function SubtitleGenerator() {
     const { data: session, status } = useSession()
