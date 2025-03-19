@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 
+// Add this type extension to the top of your file
+interface ExtendedRequestInit extends RequestInit {
+    duplex?: 'half';
+}
+
 export async function POST(request: NextRequest) {
     try {
         // Get the backend URL from environment variables
@@ -12,24 +17,27 @@ export async function POST(request: NextRequest) {
             );
         }
 
-        // Forward the request to your backend server
-        const response = await fetch(`${backendUrl}/api/process-video`, {
+        // Use the extended type
+        const requestInit: ExtendedRequestInit = {
             method: 'POST',
-            body: request.body, // Forward the body as-is
+            body: request.body,
             headers: {
-                // Only include content-type if it exists, don't set a default
                 ...(request.headers.get('content-type') ?
                     {'Content-Type': request.headers.get('content-type')!} : {})
             },
-        });
+            duplex: 'half'
+        };
 
+        // Forward the request to your backend server
+        const response = await fetch(`${backendUrl}/api/process-video`, requestInit);
+
+        // Rest of your code remains the same
         if (!response.ok) {
             const errorText = await response.text();
             let errorData;
             try {
                 errorData = JSON.parse(errorText);
             } catch {
-                // No variable name in the catch clause - this avoids the ESLint warning
                 errorData = { error: errorText };
             }
             return NextResponse.json(
