@@ -88,7 +88,11 @@ const upload = multer({
 
 // Enable CORS with your frontend domains
 app.use(cors({
-    origin: ['http://localhost:3000', 'https://www.sub0-translate.com'],
+    origin: [
+        'https://www.sub0-translate.com',
+        'https://video-subtitle-git-main-antaralmaawiys-projects.vercel.app',
+        'https://video-subtitle-4pzak8swt-antaralmaawiys-projects.vercel.app'
+    ],
     methods: ['GET', 'POST'],
     credentials: true,
     optionsSuccessStatus: 204

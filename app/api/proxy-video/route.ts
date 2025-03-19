@@ -1,13 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-export const config = {
-    api: {
-        // These are Next.js config options
-        bodyParser: false, // We'll handle the body manually to forward it
-        responseLimit: '50mb', // Allow large responses for video data
-    },
-};
-
 export async function POST(request: NextRequest) {
     try {
         // Get the backend URL from environment variables
@@ -25,14 +17,25 @@ export async function POST(request: NextRequest) {
             method: 'POST',
             body: request.body, // Forward the body as-is
             headers: {
-                // Forward relevant headers
-                'Content-Type': request.headers.get('content-type') || 'application/json',
+                // Only include content-type if it exists, don't set a default
+                ...(request.headers.get('content-type') ?
+                    {'Content-Type': request.headers.get('content-type')!} : {})
             },
         });
 
         if (!response.ok) {
-            const errorData = await response.json();
-            return NextResponse.json({ error: errorData.error || 'Backend processing failed' }, { status: response.status });
+            const errorText = await response.text();
+            let errorData;
+            try {
+                errorData = JSON.parse(errorText);
+            } catch {
+                // No variable name in the catch clause - this avoids the ESLint warning
+                errorData = { error: errorText };
+            }
+            return NextResponse.json(
+                { error: errorData.error || 'Backend processing failed' },
+                { status: response.status }
+            );
         }
 
         // Return the response from your backend
