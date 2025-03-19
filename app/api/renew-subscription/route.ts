@@ -9,7 +9,7 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || '', {
     apiVersion: '2025-02-24.acacia',
 });
 
-export async function POST(request: Request) {
+export async function POST() {
     try {
         // Get the user session
         const session = await auth();
@@ -79,17 +79,19 @@ export async function POST(request: Request) {
                 success: true,
                 message: 'Subscription renewed successfully'
             });
-        } catch (stripeError: any) {
+        } catch (stripeError: unknown) {
             console.error('Stripe renewal error:', stripeError);
             return NextResponse.json(
-                { message: `Error renewing subscription: ${stripeError.message}` },
+                {
+                    message: `Error renewing subscription: ${stripeError instanceof Error ? stripeError.message : 'An unexpected error occurred'}`
+                },
                 { status: 500 }
             );
         }
-    } catch (error: any) {
+    } catch (error: unknown) {
         console.error('Error in renew-subscription:', error);
         return NextResponse.json(
-            { message: error.message || 'An unknown error occurred' },
+            {message: error instanceof Error ? error.message : 'An unknown error occurred'},
             { status: 500 }
         );
     }

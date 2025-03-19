@@ -35,12 +35,12 @@ const Pricing = () => {
             name: 'Free',
             price: 0,
             videosPerDay: 1,
-            storage: '5GB',
+            storage: '500MB',
             color: 'bg-gray-100 border-gray-300',
             icon: <Upload className="h-8 w-8 text-gray-500" />,
             features: [
                 { name: '1 free video translate per day', included: true },
-                { name: '5GB storage', included: true },
+                { name: '500MB storage', included: true },
                 { name: 'Basic subtitle editing', included: true },
                 { name: 'Support for 10 languages', included: true },
                 { name: 'Standard quality AI', included: true },
@@ -54,11 +54,11 @@ const Pricing = () => {
             name: 'Pro',
             price: 14.99,
             videosPerDay: 10,
-            storage: '15GB',
+            storage: '5GB',
             color: 'bg-blue-50 border-blue-300',
             icon: <Crown className="h-8 w-8 text-blue-500" />,
             features: [
-                { name: '10 video translates per day', included: true },
+                { name: '5 video translates per day', included: true },
                 { name: '15GB storage', included: true },
                 { name: 'Advanced subtitle editing', included: true },
                 { name: 'Support for 40 languages', included: true },
@@ -74,12 +74,12 @@ const Pricing = () => {
             name: 'Elite',
             price: 39.99,
             videosPerDay: 30,
-            storage: '30GB',
+            storage: '10GB',
             color: 'bg-purple-50 border-purple-300',
             icon: <HardDrive className="h-8 w-8 text-purple-500" />,
             features: [
                 { name: '30 video translates per day', included: true },
-                { name: '30GB storage', included: true },
+                { name: '10GB storage', included: true },
                 { name: 'Professional subtitle editing', included: true },
                 { name: 'Support for 100+ languages', included: true },
                 { name: 'Premium quality AI', included: true },
@@ -97,7 +97,7 @@ const Pricing = () => {
     };
 
     // Handle get started action
-    const handleGetStarted = (planId: string) => {
+    const handleGetStarted = () => {
         // If user is signed in, take them to the dashboard or manage-plan page
         if (session) {
             router.push('/dashboard/manage-plan');
@@ -174,7 +174,7 @@ const Pricing = () => {
                                         ? 'bg-gray-800 hover:bg-gray-900 text-white'
                                         : 'bg-blue-600 hover:bg-blue-700 text-white'
                                     }`}
-                                    onClick={() => handleGetStarted(plan.id)}
+                                    onClick={() => handleGetStarted()}
                                 >
                                     {plan.id === 'free' ? 'Get Started' : 'Get Started'}
                                     <ArrowRight className="ml-2 h-5 w-5" />

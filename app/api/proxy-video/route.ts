@@ -10,7 +10,7 @@ export const config = {
 
 export async function POST(request: NextRequest) {
     try {
-        const { videoUrl, sourceLanguage, targetLanguage } = await request.json();
+        const { videoUrl, targetLanguage } = await request.json();
 
         if (!videoUrl) {
             return NextResponse.json({ error: 'No video URL provided' }, { status: 400 });
@@ -30,8 +30,10 @@ export async function POST(request: NextRequest) {
       Then we would translate it to ${targetLanguage} if needed.`,
             videoUrl: videoUrl,
         });
-    } catch (error: any) {
-        console.error('Proxy video error:', error);
-        return NextResponse.json({ error: error.message }, { status: 500 });
+    } catch (error: unknown) {
+        return NextResponse.json(
+            {error: error instanceof Error ? error.message : 'An unexpected error occurred'},
+            { status: 500 }
+        );
     }
 }

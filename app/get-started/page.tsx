@@ -7,7 +7,7 @@ import { useRouter } from 'next/navigation';
 import Loading from '@/app/Loading';
 
 export default function GetStarted() {
-    const { data: session, status } = useSession();
+    const {status } = useSession();
     const isLoaded = status !== 'loading';
     const isSignedIn = status === 'authenticated';
     const router = useRouter();

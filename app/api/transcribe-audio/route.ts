@@ -32,8 +32,11 @@ export async function POST(request: NextRequest) {
         const transcription = await transcribeAudio(audioBuffer, sourceLanguage);
 
         return NextResponse.json({ success: true, transcription });
-    } catch (error: any) {
+    } catch (error: unknown) {
         console.error('Transcription error:', error);
-        return NextResponse.json({ error: error.message }, { status: 500 });
+        return NextResponse.json(
+            {error: error instanceof Error ? error.message : 'An unexpected error occurred'},
+            { status: 500 }
+        );
     }
 }

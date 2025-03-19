@@ -40,11 +40,17 @@ async function getFFmpeg(): Promise<FFmpeg> {
  */
 function fileDataToArrayBuffer(data: FFmpegFileData): ArrayBuffer {
     if (typeof data === 'string') {
-        return new TextEncoder().encode(data).buffer;
+        // Create a new ArrayBuffer from the encoded data to ensure proper type
+        const encoded = new TextEncoder().encode(data);
+        const buffer = new ArrayBuffer(encoded.byteLength);
+        new Uint8Array(buffer).set(encoded);
+        return buffer;
     }
 
-    // It's a Uint8Array
-    return data.buffer;
+    // It's a Uint8Array, create a new ArrayBuffer to ensure proper type
+    const buffer = new ArrayBuffer(data.byteLength);
+    new Uint8Array(buffer).set(data);
+    return buffer;
 }
 
 /**
@@ -99,7 +105,10 @@ export async function embedSubtitles(
     try {
         // Write input files to memory
         await ffmpeg.writeFile('input.mp4', new Uint8Array(videoBuffer));
-        await ffmpeg.writeFile('subtitles.srt', new TextEncoder().encode(subtitlesContent));
+
+        // Create proper ArrayBuffer for subtitles
+        const subtitlesEncoded = new TextEncoder().encode(subtitlesContent);
+        await ffmpeg.writeFile('subtitles.srt', subtitlesEncoded);
 
         // Embed subtitles into video
         await ffmpeg.exec([
@@ -156,10 +165,9 @@ export async function downloadVideo(url: string): Promise<ArrayBuffer> {
  * Save video to server and return a URL
  * This is a placeholder - in a real app you would upload to cloud storage
  * @param videoBuffer Video file as ArrayBuffer
- * @param filename Output filename
  * @returns URL to the saved video
  */
-export async function saveProcessedVideo(videoBuffer: ArrayBuffer, filename: string): Promise<string> {
+export async function saveProcessedVideo(videoBuffer: ArrayBuffer): Promise<string> {
     // In a real app, you would upload to cloud storage (AWS S3, Google Cloud Storage, etc.)
     // For development, we'll create a blob URL for the browser
     const blob = new Blob([videoBuffer], { type: 'video/mp4' });

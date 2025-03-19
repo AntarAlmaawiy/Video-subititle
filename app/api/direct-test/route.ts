@@ -54,8 +54,11 @@ export async function GET(request: Request) {
             before: existingData || null,
             after: data[0]
         });
-    } catch (err: any) {
+    } catch (err: unknown) {
         console.error('Test subscription error:', err);
-        return NextResponse.json({ error: err.message || 'Test failed' }, { status: 500 });
+        return NextResponse.json(
+            {error: err instanceof Error ? err.message : 'Test failed'},
+            { status: 500 }
+        );
     }
 }

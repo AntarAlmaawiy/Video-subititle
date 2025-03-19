@@ -53,8 +53,16 @@ export async function translateText(text: string, sourceLanguage: string, target
     }
 }
 
+// Define type for transcript segments
+interface TranscriptSegment {
+    start: number;
+    end: number;
+    text: string;
+    [key: string]: unknown; // For any additional properties
+}
+
 // Format transcriptions into SRT format
-export function formatToSRT(segments: any[]) {
+export function formatToSRT(segments: TranscriptSegment[]) {
     let srtContent = '';
 
     segments.forEach((segment, index) => {

@@ -1,6 +1,6 @@
-// lib/stripe.ts
 import Stripe from 'stripe';
 import { loadStripe } from '@stripe/stripe-js';
+import type { Stripe as StripeClient } from '@stripe/stripe-js';
 
 // Server-side Stripe client
 export const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || '', {
@@ -9,7 +9,7 @@ export const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || '', {
 
 // Client-side Stripe promise for frontend components
 // Using let instead of const allows for mocking in tests
-let stripePromise: Promise<Stripe | null> | null = null;
+let stripePromise: Promise<StripeClient | null> | null = null;
 
 export const getStripeJs = () => {
     if (!stripePromise) {

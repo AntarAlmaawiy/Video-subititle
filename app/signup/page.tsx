@@ -7,7 +7,6 @@ import Link from "next/link";
 import Image from "next/image";
 import { signIn } from "next-auth/react";
 import { signUpWithEmail } from "@/lib/supabase";
-import { supabase } from "@/lib/supabase";
 
 export default function SignUpPage() {
     const router = useRouter();
@@ -84,31 +83,20 @@ export default function SignUpPage() {
                         router.push("/signin");
                     }, 2000);
                 }
-            } catch (signUpError: any) {
+            } catch (signUpError: unknown) {
                 console.error("Supabase signup error:", signUpError);
-                throw new Error(signUpError.message || "Error creating account");
+                throw new Error(
+                    signUpError instanceof Error ? signUpError.message : "Error creating account");
             }
 
-        } catch (error: any) {
+        } catch (error: unknown) {
             console.error("Sign up error:", error);
-            setError(error.message || "An error occurred during sign up");
-        } finally {
+            setError(error instanceof Error ? error.message : "An error occurred during sign up");
+        }finally {
             setLoading(false);
         }
     };
 
-    // Debug function to test Supabase connection
-    const testSupabaseConnection = async () => {
-        try {
-            console.log("Testing Supabase connection...");
-            const { data, error } = await supabase.auth.getSession();
-            console.log("Supabase connection test:", { data, error });
-            alert("Supabase connection test complete. Check console for details.");
-        } catch (e) {
-            console.error("Supabase connection error:", e);
-            alert("Error testing Supabase connection. Check console for details.");
-        }
-    };
 
     return (
         <div className="flex min-h-screen flex-col items-center justify-center py-12 px-4 sm:px-6 lg:px-8 bg-gray-50">
@@ -202,17 +190,6 @@ export default function SignUpPage() {
                         </button>
                     </div>
                 </form>
-
-                {/* Debug button */}
-                <div className="text-center">
-                    <button
-                        type="button"
-                        onClick={testSupabaseConnection}
-                        className="text-xs text-gray-500 underline"
-                    >
-                        Test Supabase Connection
-                    </button>
-                </div>
 
                 <div className="text-center mt-4">
                     <p className="text-sm text-gray-600">

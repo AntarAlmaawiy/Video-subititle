@@ -5,7 +5,7 @@ import Image from 'next/image';
 import { useSession } from 'next-auth/react';
 
 const Hero = () => {
-    const { data: session, status } = useSession();
+    const { status } = useSession();
     const isAuthenticated = status === 'authenticated';
 
     return (
@@ -55,7 +55,8 @@ const Hero = () => {
                     </main>
                 </div>
             </div>
-            <div className="lg:absolute lg:inset-y-0 lg:right-0 lg:w-1/2">
+            {/* Image container that's hidden on mobile but visible on larger screens */}
+            <div className="hidden sm:block lg:absolute lg:inset-y-0 lg:right-0 lg:w-1/2">
                 <div className="h-56 w-full object-cover sm:h-72 md:h-96 lg:w-full lg:h-full">
                     <Image
                         src="/hero-image.jpg"

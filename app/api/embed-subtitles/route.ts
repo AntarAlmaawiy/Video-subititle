@@ -49,9 +49,12 @@ export async function POST(request: NextRequest) {
             transcription: result.transcription,
             translation: result.translation,
         });
-    } catch (error: any) {
+    } catch (error: unknown) {
         console.error('Subtitle embedding error:', error);
-        return NextResponse.json({ error: error.message }, { status: 500 });
+        return NextResponse.json(
+            {error: error instanceof Error ? error.message : 'An unexpected error occurred'},
+            { status: 500 }
+        );
     }
 }
 

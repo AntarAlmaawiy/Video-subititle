@@ -1,4 +1,3 @@
-// next.config.ts
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
@@ -10,16 +9,6 @@ const nextConfig: NextConfig = {
     // Add the images configuration here
     images: {
         domains: ['lh3.googleusercontent.com'],
-    },
-
-    // Configure API routes
-    api: {
-        // Increase body parser size limit for video uploads
-        bodyParser: {
-            sizeLimit: '100mb',
-        },
-        // Increase response limit for processed videos
-        responseLimit: false,
     },
 
     // Experimental features

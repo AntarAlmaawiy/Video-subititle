@@ -63,7 +63,7 @@ export default function ContactPage() {
                             </Link>
                             <h1 className="mt-4 text-3xl font-extrabold text-gray-900">Contact Us</h1>
                             <p className="mt-2 text-lg text-gray-600 max-w-2xl mx-auto">
-                                Have questions or feedback? We'd love to hear from you. Fill out the form below,
+                                Have questions or feedback? We&#39;d love to hear from you. Fill out the form below,
                                 and our team will get back to you as soon as possible.
                             </p>
                         </div>
@@ -73,7 +73,7 @@ export default function ContactPage() {
                                 <CheckCircle className="h-12 w-12 text-green-500 mx-auto mb-4" />
                                 <h3 className="text-lg font-medium text-green-800 mb-2">Message Sent!</h3>
                                 <p className="text-green-700">
-                                    Thank you for reaching out. We'll get back to you as soon as possible.
+                                    Thank you for reaching out. We&#39;ll get back to you as soon as possible.
                                 </p>
                                 <button
                                     type="button"

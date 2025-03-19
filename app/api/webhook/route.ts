@@ -33,10 +33,12 @@ export async function POST(request: Request) {
         try {
             event = stripe.webhooks.constructEvent(body, signature, webhookSecret);
             console.log(`✅ Webhook event received: ${event.type} - ID: ${event.id}`);
-        } catch (err: any) {
-            console.error(`❌ Webhook signature verification failed: ${err.message}`);
+        } catch (err: unknown) {
+            console.error(`❌ Webhook signature verification failed: ${
+                err instanceof Error ? err.message : 'Unknown error'
+            }`);
             return NextResponse.json(
-                { message: `Webhook signature verification failed: ${err.message}` },
+                {message: `Webhook signature verification failed: ${err instanceof Error ? err.message : 'Unknown error'}`},
                 { status: 400 }
             );
         }
@@ -117,6 +119,7 @@ export async function POST(request: Request) {
 
                 let result;
 
+                // Fix for the checkout.session.completed handler section
                 if (existingSubscription) {
                     console.log(`🔄 Updating existing subscription for user ${userId}`, existingSubscription);
 
@@ -128,15 +131,12 @@ export async function POST(request: Request) {
                         old_stripe_customer_id: existingSubscription.stripe_customer_id
                     })}`);
 
+                    // Update with the full subscription data instead of just setting to 'canceled'
                     const { data, error: updateError } = await adminSupabase
                         .from('user_subscriptions')
-                        .update({
-                            status: 'canceled',  // Use 'canceled' not 'canceling'
-                            updated_at: new Date().toISOString()
-                        })
+                        .update(subscriptionData)  // Use the full subscriptionData object
                         .eq('user_id', userId)
                         .select();
-
 
                     if (updateError) {
                         console.error(`❌ Error updating subscription: ${updateError.message}`);
@@ -147,6 +147,8 @@ export async function POST(request: Request) {
                     // After update - verification
                     console.log(`After update: ${JSON.stringify(data)}`);
                 } else {
+                    // This part is fine - creating a new subscription
+                } {
                     console.log(`➕ Creating new subscription for user ${userId}`);
                     const { data, error: insertError } = await adminSupabase
                         .from('user_subscriptions')
@@ -418,10 +420,10 @@ export async function POST(request: Request) {
         }
 
         return NextResponse.json({ received: true });
-    } catch (error: any) {
+    } catch (error: unknown) {
         console.error('❌ Webhook error:', error);
         return NextResponse.json(
-            { message: error.message || 'Webhook handler error' },
+            {message: error instanceof Error ? error.message : 'Webhook handler error'},
             { status: 500 }
         );
     }

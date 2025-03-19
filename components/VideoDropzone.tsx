@@ -5,11 +5,15 @@ import { useDropzone } from 'react-dropzone';
 import { Upload, X, Loader2 } from 'lucide-react';
 
 interface VideoDropzoneProps {
-    onVideoSelected: (file: File, type: 'file') => void;
+    onVideoSelected: (file: File | null, type: 'file') => void;
     isProcessing: boolean;
 }
+
 const VideoDropzone = ({ onVideoSelected, isProcessing }: VideoDropzoneProps) => {
     const [error, setError] = useState<string | null>(null);
+
+    // Create a state to track the selected file, separate from react-dropzone's state
+    const [selectedVideoFile, setSelectedVideoFile] = useState<File | null>(null);
 
     const onDrop = useCallback(
         (acceptedFiles: File[]) => {
@@ -22,12 +26,13 @@ const VideoDropzone = ({ onVideoSelected, isProcessing }: VideoDropzoneProps) =>
             }
 
             setError(null);
+            setSelectedVideoFile(file);
             onVideoSelected(file, 'file');
         },
         [onVideoSelected]
     );
 
-    const { getRootProps, getInputProps, isDragActive, acceptedFiles } = useDropzone({
+    const { getRootProps, getInputProps, isDragActive } = useDropzone({
         onDrop,
         accept: {
             'video/*': ['.mp4', '.mov', '.avi', '.mkv', '.webm'],
@@ -36,7 +41,21 @@ const VideoDropzone = ({ onVideoSelected, isProcessing }: VideoDropzoneProps) =>
         maxFiles: 1,
     });
 
-    const selectedFile = acceptedFiles[0];
+    const handleRemoveFile = (e: React.MouseEvent) => {
+        e.stopPropagation();
+
+        // Reset our own state
+        setSelectedVideoFile(null);
+
+        // Reset the file input
+        const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+        if (fileInput) {
+            fileInput.value = '';
+        }
+
+        // Notify parent component
+        onVideoSelected(null, 'file');
+    };
 
     return (
         <div className="max-w-2xl mx-auto py-8">
@@ -48,21 +67,17 @@ const VideoDropzone = ({ onVideoSelected, isProcessing }: VideoDropzoneProps) =>
             >
                 <input {...getInputProps()} />
 
-                {selectedFile ? (
+                {selectedVideoFile ? (
                     <div className="flex items-center justify-between p-2 bg-gray-100 rounded">
                         <div className="flex items-center">
                             <Upload className="h-5 w-5 text-indigo-600 mr-2" />
-                            <span className="text-sm truncate max-w-xs">{selectedFile.name}</span>
+                            <span className="text-sm truncate max-w-xs">{selectedVideoFile.name}</span>
                         </div>
                         <button
-                            onClick={(e) => {
-                                e.stopPropagation();
-                                acceptedFiles.slice(0, acceptedFiles.length);
-                                // Force update by causing a re-render
-                                onDrop([]);
-                            }}
+                            onClick={handleRemoveFile}
                             disabled={isProcessing}
                             className="text-gray-500 hover:text-red-500"
+                            type="button"
                         >
                             <X className="h-5 w-5" />
                         </button>

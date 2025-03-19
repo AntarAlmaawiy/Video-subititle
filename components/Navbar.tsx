@@ -12,8 +12,7 @@ const Navbar = () => {
     const [isDropdownOpen, setIsDropdownOpen] = useState(false);
     const { data: session, status } = useSession();
     const isAuthenticated = status === "authenticated";
-    const pathname = usePathname();
-
+    usePathname();
     const toggleMenu = () => {
         setIsMenuOpen(!isMenuOpen);
     };

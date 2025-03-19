@@ -9,12 +9,11 @@ import Features from '@/components/Features';
 import Footer from '@/components/Footer';
 import VideoDropzone from "@/components/VideoDropzone";
 import LanguageSelector from "@/components/LanguageSelector";
-import ProcessingStatus from "@/components/ProcessingStatus";
 import Pricing from "@/components/Pricing";
 
 export default function Home() {
     const router = useRouter();
-    const { data: session, status } = useSession();
+    const {status } = useSession();
     const isSignedIn = status === 'authenticated';
     const [hasUsedBefore, setHasUsedBefore] = useState(false);
 
@@ -63,7 +62,7 @@ export default function Home() {
 
                         <div className="mt-10 bg-white shadow rounded-lg p-6">
                             <VideoDropzone
-                                onVideoSelected={(file, type) => {
+                                onVideoSelected={() => {
                                     // Handle file selection
                                 }}
                                 isProcessing={false}

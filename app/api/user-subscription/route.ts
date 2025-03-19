@@ -27,10 +27,11 @@ export async function GET() {
         return NextResponse.json({
             subscription: data || { plan_id: 'free', status: 'active' }
         });
-    } catch (err: any) {
+    } catch (err: unknown) {
         console.error('Subscription fetch error:', err);
-        return NextResponse.json({
-            error: err.message || 'Failed to fetch subscription'
-        }, { status: 500 });
+        return NextResponse.json(
+            {error: err instanceof Error ? err.message : 'Failed to fetch subscription'},
+            { status: 500 }
+        );
     }
 }

@@ -1,12 +1,12 @@
-// dashboard/manage-plan/page.tsx
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { useSession } from "next-auth/react";
 import { supabase, getUserStorageStats, getUserSubscription, canUploadMoreVideos } from '@/lib/supabase';
 import { CheckCircle, XCircle, ArrowRight, Crown, Upload, HardDrive, Loader2, RefreshCw } from 'lucide-react';
 import { toast } from 'react-hot-toast'; // Add this package if you don't have it
+import ConfirmationModal from '@/components/ConfirmationModal';
 
 // Plan types
 interface PlanFeature {
@@ -50,6 +50,11 @@ export default function ManagePlanPage() {
     const [error, setError] = useState<string | null>(null);
     const [processingPayment, setProcessingPayment] = useState(false);
     const [loadAttempted, setLoadAttempted] = useState(false);
+
+    // Modal states
+    const [showCancelModal, setShowCancelModal] = useState(false);
+    const [showRenewModal, setShowRenewModal] = useState(false);
+
     // Current subscription state
     const [currentSubscription, setCurrentSubscription] = useState<UserSubscription>({
         plan: 'free',
@@ -63,20 +68,20 @@ export default function ManagePlanPage() {
         videosUsedPercent: 0
     });
 
-    // Plans data
-    const plans: PlanDetails[] = [
+    // Plans data wrapped in useMemo to prevent it from being recreated on every render
+    const plans: PlanDetails[] = useMemo(() => [
         {
             id: 'free',
             name: 'Free',
             price: 0,
             videosPerDay: 1,
-            storage: '5GB',
-            storageBytes: 5 * 1024 * 1024 * 1024, // 5GB in bytes
+            storage: '500MB',
+            storageBytes: 500 * 1024 * 1024, // 500MB in bytes
             color: 'bg-gray-100 border-gray-300',
             icon: <Upload className="h-8 w-8 text-gray-500" />,
             features: [
                 { name: '1 free video translate per day', included: true },
-                { name: '5GB storage', included: true },
+                { name: '500MB storage', included: true },
                 { name: 'Basic subtitle editing', included: true },
                 { name: 'Support for 10 languages', included: true },
                 { name: 'Standard quality AI', included: true },
@@ -90,13 +95,13 @@ export default function ManagePlanPage() {
             name: 'Pro',
             price: 14.99,
             videosPerDay: 10,
-            storage: '15GB',
-            storageBytes: 15 * 1024 * 1024 * 1024, // 15GB in bytes
+            storage: '5GB',
+            storageBytes: 5 * 1024 * 1024 * 1024,
             color: 'bg-blue-50 border-blue-300',
             icon: <Crown className="h-8 w-8 text-blue-500" />,
             features: [
                 { name: '10 video translates per day', included: true },
-                { name: '15GB storage', included: true },
+                { name: '5GB storage', included: true },
                 { name: 'Advanced subtitle editing', included: true },
                 { name: 'Support for 40 languages', included: true },
                 { name: 'Enhanced quality AI', included: true },
@@ -111,13 +116,13 @@ export default function ManagePlanPage() {
             name: 'Elite',
             price: 39.99,
             videosPerDay: 30,
-            storage: '30GB',
-            storageBytes: 30 * 1024 * 1024 * 1024, // 30GB in bytes
+            storage: '10GB',
+            storageBytes: 10 * 1024 * 1024 * 1024, // 10GB in bytes
             color: 'bg-purple-50 border-purple-300',
             icon: <HardDrive className="h-8 w-8 text-purple-500" />,
             features: [
                 { name: '30 video translates per day', included: true },
-                { name: '30GB storage', included: true },
+                { name: '10GB storage', included: true },
                 { name: 'Professional subtitle editing', included: true },
                 { name: 'Support for 100+ languages', included: true },
                 { name: 'Premium quality AI', included: true },
@@ -126,102 +131,13 @@ export default function ManagePlanPage() {
                 { name: 'Batch processing', included: true },
             ]
         },
-    ];
+    ], []);
 
     // Calculate yearly prices (20% discount)
     const getPrice = (plan: PlanDetails) => {
         if (plan.price === 0) return 0;
         return activeTab === 'yearly' ? (plan.price * 12 * 0.8).toFixed(2) : plan.price.toFixed(2);
     };
-
-    // Check if returning from Stripe
-    // In manage-plan/page.tsx - Update the useEffect that handles return from Stripe
-    useEffect(() => {
-        if (typeof window !== 'undefined') {
-            const urlParams = new URLSearchParams(window.location.search);
-            const success = urlParams.get('success');
-
-            if (success === 'true') {
-                // Check if we have session before proceeding
-                if (status === "authenticated" && session?.user?.id) {
-                    toast.success('Payment successful! Your subscription is being updated...');
-
-                    // Force a direct refresh from the database
-                    const checkSubscription = async () => {
-                        try {
-                            const response = await fetch('/api/user-subscription');
-                            if (response.ok) {
-                                const data = await response.json();
-                                console.log("Subscription after payment:", data.subscription);
-                                await refreshSubscription();
-                            }
-                        } catch (err) {
-                            console.error("Error checking subscription:", err);
-                        }
-                    };
-
-                    // Give the webhook a chance to process
-                    setTimeout(checkSubscription, 2000);
-                } else {
-                    // Save the success state and check after authentication
-                    localStorage.setItem('pendingSubscriptionCheck', 'true');
-                }
-
-                // Clean up URL
-                window.history.replaceState({}, document.title, window.location.pathname);
-            }
-        }
-    }, [status, session?.user?.id]);
-
-    // Check localStorage for pending checkout - FIXED
-    const checkPendingCheckout = useCallback(async () => {
-        // Don't proceed if not authenticated
-        if (status !== "authenticated" || !session?.user?.id) {
-            console.log("User not authenticated, delaying checkout verification");
-            return;
-        }
-
-        if (typeof window !== 'undefined') {
-            const pendingCheckout = localStorage.getItem('pendingCheckout');
-            const checkoutTime = localStorage.getItem('checkoutTime');
-
-            if (pendingCheckout === 'true' && checkoutTime) {
-                // Check if this is recent (within last 10 minutes)
-                const timeElapsed = Date.now() - parseInt(checkoutTime);
-                const isRecent = timeElapsed < 10 * 60 * 1000; // 10 minutes
-
-                if (isRecent) {
-                    console.log('Detected recent checkout. Refreshing subscription data...');
-
-                    toast.loading('Checking subscription status...', {
-                        id: 'checking-subscription'
-                    });
-
-                    // Call refreshSubscription only if we have a valid session
-                    setTimeout(async () => {
-                        const success = await refreshSubscription();
-
-                        if (success) {
-                            localStorage.removeItem('pendingCheckout');
-                            localStorage.removeItem('checkoutTime');
-
-                            toast.success('Subscription updated successfully', {
-                                id: 'checking-subscription'
-                            });
-                        } else {
-                            toast.error('Could not verify subscription status', {
-                                id: 'checking-subscription'
-                            });
-                        }
-                    }, 2000);
-                } else {
-                    // Clean up old data
-                    localStorage.removeItem('pendingCheckout');
-                    localStorage.removeItem('checkoutTime');
-                }
-            }
-        }
-    }, [session?.user?.id, status]);
 
     // Load user's subscription data and usage
     const fetchUserData = useCallback(async (forceRefresh = false) => {
@@ -291,6 +207,16 @@ export default function ManagePlanPage() {
                     userSubscription.next_billing_date ||
                     new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
 
+                // Format storage total based on plan
+                let formattedStorageTotal;
+                if (userPlan.id === 'free') {
+                    // For free plan, use MB
+                    formattedStorageTotal = formatBytes(userPlan.storageBytes).toString();
+                } else {
+                    // For paid plans, use GB
+                    formattedStorageTotal = formatBytes(userPlan.storageBytes).toString();
+                }
+
                 // Update subscription state with real data
                 setCurrentSubscription({
                     plan: userPlan.id,
@@ -299,7 +225,7 @@ export default function ManagePlanPage() {
                     videosUsed: videoUsage.currentCount,
                     videosTotal: userPlan.videosPerDay,
                     storageUsed: formatBytes(storageStats.usedStorage).toString(),
-                    storageTotal: formatBytes(userPlan.storageBytes).toString(),
+                    storageTotal: formattedStorageTotal,
                     storageUsedPercent: storageUsedPercent,
                     videosUsedPercent: videosUsedPercent
                 });
@@ -319,7 +245,7 @@ export default function ManagePlanPage() {
                     videosUsed: 0,
                     videosTotal: userPlan.videosPerDay,
                     storageUsed: '0',
-                    storageTotal: userPlan.storage.replace('GB', ''),
+                    storageTotal: userPlan.storage.replace('GB', '').replace('MB', ''),
                     storageUsedPercent: 0,
                     videosUsedPercent: 0
                 });
@@ -357,33 +283,10 @@ export default function ManagePlanPage() {
             setLoading(false);
             setRefreshing(false);
         }
-    }, [session?.user?.id, status, plans, loading]);
+    }, [session?.user?.id, status, plans, loading]);  // Removed refreshSubscription from dependencies
 
-    // Check on component mount - FIXED
-    useEffect(() => {
-        if (status === "unauthenticated") {
-            router.push('/signin');
-            return;
-        }
-
-        // Only proceed if authentication is complete
-        if (status === "authenticated" && session?.user?.id) {
-            if (!loadAttempted) {
-                console.log("Authentication confirmed, loading subscription data");
-                fetchUserData();
-
-                // Check for pending checkout only after auth is confirmed
-                setTimeout(() => {
-                    checkPendingCheckout();
-                }, 1000); // Give a small delay after initial data fetch
-            }
-        } else {
-            console.log("Waiting for authentication to complete");
-        }
-    }, [status, router, session?.user?.id, fetchUserData, loadAttempted, checkPendingCheckout]);
-
-    // Improved refreshSubscription function with retry logic
-    const refreshSubscription = async () => {
+    // Improved refreshSubscription function with retry logic - Defined early to avoid dependency issues
+    const refreshSubscription = useCallback(async () => {
         setRefreshing(true);
         let retryCount = 0;
         const maxRetries = 3;
@@ -403,7 +306,7 @@ export default function ManagePlanPage() {
             return false;
         };
 
-// Call it during refresh
+        // Call it during refresh
         await forceUpdate();
 
         // FIXED attemptRefresh function
@@ -437,7 +340,6 @@ export default function ManagePlanPage() {
                     console.log("Found subscription in database:", directSubscriptionData);
 
                     // Update UI with fetched data
-
                     setCurrentSubscription(prev => ({
                         ...prev,
                         plan: directSubscriptionData.plan_id,
@@ -477,7 +379,118 @@ export default function ManagePlanPage() {
         };
 
         return attemptRefresh();
-    };
+    }, [session?.user?.id, fetchUserData]); // Added fetchUserData to dependencies
+
+    // Check if returning from Stripe
+    useEffect(() => {
+        if (typeof window !== 'undefined') {
+            const urlParams = new URLSearchParams(window.location.search);
+            const success = urlParams.get('success');
+
+            if (success === 'true') {
+                // Check if we have session before proceeding
+                if (status === "authenticated" && session?.user?.id) {
+                    toast.success('Payment successful! Your subscription is being updated...');
+
+                    // Force a direct refresh from the database
+                    const checkSubscription = async () => {
+                        try {
+                            const response = await fetch('/api/user-subscription');
+                            if (response.ok) {
+                                const data = await response.json();
+                                console.log("Subscription after payment:", data.subscription);
+                                await refreshSubscription();
+                            }
+                        } catch (err) {
+                            console.error("Error checking subscription:", err);
+                        }
+                    };
+
+                    // Give the webhook a chance to process
+                    setTimeout(checkSubscription, 2000);
+                } else {
+                    // Save the success state and check after authentication
+                    localStorage.setItem('pendingSubscriptionCheck', 'true');
+                }
+
+                // Clean up URL
+                window.history.replaceState({}, document.title, window.location.pathname);
+            }
+        }
+    }, [status, session?.user?.id, refreshSubscription]);
+
+    // Check localStorage for pending checkout
+    const checkPendingCheckout = useCallback(async () => {
+        // Don't proceed if not authenticated
+        if (status !== "authenticated" || !session?.user?.id) {
+            console.log("User not authenticated, delaying checkout verification");
+            return;
+        }
+
+        if (typeof window !== 'undefined') {
+            const pendingCheckout = localStorage.getItem('pendingCheckout');
+            const checkoutTime = localStorage.getItem('checkoutTime');
+
+            if (pendingCheckout === 'true' && checkoutTime) {
+                // Check if this is recent (within last 10 minutes)
+                const timeElapsed = Date.now() - parseInt(checkoutTime);
+                const isRecent = timeElapsed < 10 * 60 * 1000; // 10 minutes
+
+                if (isRecent) {
+                    console.log('Detected recent checkout. Refreshing subscription data...');
+
+                    toast.loading('Checking subscription status...', {
+                        id: 'checking-subscription'
+                    });
+
+                    // Call refreshSubscription only if we have a valid session
+                    setTimeout(async () => {
+                        const success = await refreshSubscription();
+
+                        if (success) {
+                            localStorage.removeItem('pendingCheckout');
+                            localStorage.removeItem('checkoutTime');
+
+                            toast.success('Subscription updated successfully', {
+                                id: 'checking-subscription'
+                            });
+                        } else {
+                            toast.error('Could not verify subscription status', {
+                                id: 'checking-subscription'
+                            });
+                        }
+                    }, 2000);
+                } else {
+                    // Clean up old data
+                    localStorage.removeItem('pendingCheckout');
+                    localStorage.removeItem('checkoutTime');
+                }
+            }
+        }
+    }, [session?.user?.id, status, refreshSubscription]); // Removed unnecessary refreshSubscription dependency
+
+    // Check on component mount
+    useEffect(() => {
+        if (status === "unauthenticated") {
+            router.push('/signin');
+            return;
+        }
+
+        // Only proceed if authentication is complete
+        if (status === "authenticated" && session?.user?.id) {
+            if (!loadAttempted) {
+                console.log("Authentication confirmed, loading subscription data");
+                fetchUserData();
+
+                // Check for pending checkout only after auth is confirmed
+                setTimeout(() => {
+                    checkPendingCheckout();
+                }, 1000); // Give a small delay after initial data fetch
+            }
+        } else {
+            console.log("Waiting for authentication to complete");
+        }
+    }, [status, router, session?.user?.id, fetchUserData, loadAttempted, checkPendingCheckout]);
 
     // Handle checkout with Stripe
     const handleUpgrade = async (planId: string) => {
@@ -524,105 +537,113 @@ export default function ManagePlanPage() {
         }
     };
 
+    // Show cancel confirmation modal
     const handleCancel = async () => {
         if (!session?.user?.id) return;
+        setShowCancelModal(true);
+    };
 
-        if (confirm('Are you sure you want to cancel your subscription? You will be downgraded to the Free plan at the end of your billing cycle.')) {
-            try {
-                setProcessingPayment(true);
+    // Process cancellation after confirmation
+    const confirmCancel = async () => {
+        try {
+            setProcessingPayment(true);
+            setShowCancelModal(false); // Close the modal
 
-                // Force UI update immediately for better UX
+            // Force UI update immediately for better UX
+            setCurrentSubscription(prev => ({
+                ...prev,
+                status: 'canceled'  // Use 'canceled' not 'canceling'
+            }));
+
+            // Cancel subscription in your database and with Stripe
+            const response = await fetch('/api/cancel-subscription', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+            });
+
+            // First log the raw response for debugging
+            console.log('Raw cancel response:', response);
+
+            const data = await response.json();
+            console.log('Cancellation response data:', data);
+
+            if (!response.ok) {
+                throw new Error(data.message || 'Failed to cancel subscription');
+            }
+
+            toast.success('Your subscription has been canceled. You will be downgraded to Free at the end of your billing cycle.');
+
+            // Reload the data after a short delay
+            setTimeout(async () => {
+                await refreshSubscription();
+
+                // Make sure UI shows canceled status
                 setCurrentSubscription(prev => ({
                     ...prev,
                     status: 'canceled'  // Use 'canceled' not 'canceling'
                 }));
+            }, 1500);
 
-                // Cancel subscription in your database and with Stripe
-                const response = await fetch('/api/cancel-subscription', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                });
+        } catch (err: unknown) {
+            console.error('Error canceling subscription:', err);
+            toast.error(err instanceof Error ? err.message : 'Failed to cancel subscription');
 
-                // First log the raw response for debugging
-                console.log('Raw cancel response:', response);
-
-                const data = await response.json();
-                console.log('Cancellation response data:', data);
-
-                if (!response.ok) {
-                    throw new Error(data.message || 'Failed to cancel subscription');
-                }
-
-                toast.success('Your subscription has been canceled. You will be downgraded to Free at the end of your billing cycle.');
-
-                // Reload the data after a short delay
-                setTimeout(async () => {
-                    await refreshSubscription();
-
-                    // Make sure UI shows canceled status
-                    setCurrentSubscription(prev => ({
-                        ...prev,
-                        status: 'canceled'  // Use 'canceled' not 'canceling'
-                    }));
-                }, 1500);
-
-            } catch (err: unknown) {
-                console.error('Error canceling subscription:', err);
-                toast.error(err instanceof Error ? err.message : 'Failed to cancel subscription');
-
-                // Revert UI if there was an error
-                refreshSubscription();
-            } finally {
-                setProcessingPayment(false);
-            }
+            // Revert UI if there was an error
+            refreshSubscription();
+        } finally {
+            setProcessingPayment(false);
         }
     };
 
+    // Show renew confirmation modal
     const handleRenew = async () => {
         if (!session?.user?.id) return;
+        setShowRenewModal(true);
+    };
 
-        if (confirm('Would you like to renew your subscription? You will not be downgraded at the end of your billing cycle.')) {
-            try {
-                setProcessingPayment(true);
+    // Process renewal after confirmation
+    const confirmRenew = async () => {
+        try {
+            setProcessingPayment(true);
+            setShowRenewModal(false); // Close the modal
 
-                // Call your renewal API endpoint
-                const response = await fetch('/api/renew-subscription', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                });
+            // Call your renewal API endpoint
+            const response = await fetch('/api/renew-subscription', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+            });
 
-                const data = await response.json();
+            const data = await response.json();
 
-                if (!response.ok) {
-                    throw new Error(data.message || 'Failed to renew subscription');
-                }
-
-                // Update UI immediately
-                setCurrentSubscription(prev => ({
-                    ...prev,
-                    status: 'active'
-                }));
-
-                toast.success('Your subscription has been renewed successfully!');
-
-                // Refresh the subscription data
-                setTimeout(() => {
-                    refreshSubscription();
-                }, 1500);
-
-            } catch (err) {
-                console.error('Error renewing subscription:', err);
-                toast.error(err instanceof Error ? err.message : 'Failed to renew subscription');
-
-                // Refresh the subscription data even on error
-                refreshSubscription();
-            } finally {
-                setProcessingPayment(false);
+            if (!response.ok) {
+                throw new Error(data.message || 'Failed to renew subscription');
             }
+
+            // Update UI immediately
+            setCurrentSubscription(prev => ({
+                ...prev,
+                status: 'active'
+            }));
+
+            toast.success('Your subscription has been renewed successfully!');
+
+            // Refresh the subscription data
+            setTimeout(() => {
+                refreshSubscription();
+            }, 1500);
+
+        } catch (err) {
+            console.error('Error renewing subscription:', err);
+            toast.error(err instanceof Error ? err.message : 'Failed to renew subscription');
+
+            // Refresh the subscription data even on error
+            refreshSubscription();
+        } finally {
+            setProcessingPayment(false);
         }
     };
 
@@ -676,7 +697,8 @@ export default function ManagePlanPage() {
                                 </div>
                             </div>
                             <div>
-                                <p className="text-gray-700 mb-1">Storage: <span className="font-medium">{currentSubscription.storageUsed}/{currentSubscription.storageTotal}GB</span></p>
+                                <p className="text-gray-700 mb-1">Storage: <span className="font-medium">{currentSubscription.storageUsed}/{currentSubscription.storageTotal}
+                                    {currentSubscription.plan === 'free' ? 'MB' : 'GB'}</span></p>
                                 <div className="w-full bg-gray-200 rounded-full h-2">
                                     <div className="bg-blue-600 h-2 rounded-full" style={{ width: `${currentSubscription.storageUsedPercent}%` }}></div>
                                 </div>
@@ -805,6 +827,30 @@ export default function ManagePlanPage() {
                     ))}
                 </div>
             </div>
+
+            {/* Cancel Subscription Modal */}
+            <ConfirmationModal
+                isOpen={showCancelModal}
+                title="Cancel Subscription"
+                message="Are you sure you want to cancel your subscription? You will be downgraded to the Free plan at the end of your billing cycle."
+                confirmText="Yes, Cancel Subscription"
+                cancelText="No, Keep My Plan"
+                onConfirm={confirmCancel}
+                onCancel={() => setShowCancelModal(false)}
+                type="danger"
+            />
+
+            {/* Renew Subscription Modal */}
+            <ConfirmationModal
+                isOpen={showRenewModal}
+                title="Renew Subscription"
+                message="Would you like to renew your subscription? Your service will continue without interruption."
+                confirmText="Yes, Renew Subscription"
+                cancelText="Cancel"
+                onConfirm={confirmRenew}
+                onCancel={() => setShowRenewModal(false)}
+                type="success"
+            />
         </main>
     );
 }

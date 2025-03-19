@@ -1,12 +1,12 @@
 // app/dashboard/video-library/page.tsx
 "use client";
 
-import React, { useEffect, useState, useCallback, useRef } from 'react';
+import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { useSession } from 'next-auth/react';
 import { getUserVideos, deleteUserVideo, forceDownloadFile, getUserSubscription, canUploadMoreVideos } from '@/lib/supabase';
 import Link from 'next/link';
 import VideoPlayer from "@/components/VideoPlayer";
-import { Loader2, Plus, Crown, Clock, AlertCircle } from 'lucide-react';
+import { Loader2, Plus, Crown, Clock } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 
 interface Video {
@@ -29,7 +29,7 @@ interface UploadLimits {
 }
 
 export default function VideoLibraryPage() {
-    const { data: session } = useSession();
+    const { data: session, status } = useSession();
     const [videos, setVideos] = useState<Video[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -45,9 +45,9 @@ export default function VideoLibraryPage() {
     });
     const [timeRemaining, setTimeRemaining] = useState<string>('');
 
-    // Cache control
+    // Cache control - Define as a constant with useMemo to avoid recreation
     const lastFetchRef = useRef<number>(0);
-    const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
+    const CACHE_DURATION = useMemo(() => 5 * 60 * 1000, []); // 5 minutes
     const timerIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
     // Update the remaining time display and return if timer is still valid
@@ -114,8 +114,7 @@ export default function VideoLibraryPage() {
                 // Update cache timestamp
                 lastFetchRef.current = now;
 
-            } catch (err: any) {
-                console.error('Error fetching data:', err);
+            } catch (err: unknown) {
                 const errorMessage = err instanceof Error ? err.message : 'Failed to load your videos';
                 setError(errorMessage);
 
@@ -129,7 +128,7 @@ export default function VideoLibraryPage() {
         };
 
         fetchData();
-    }, [session?.user?.id, selectedVideo, updateRemainingTime, videos.length]);
+    }, [session?.user?.id, selectedVideo, updateRemainingTime, videos, CACHE_DURATION]);
 
     // Set up timer interval for next upload time
     useEffect(() => {
@@ -179,9 +178,8 @@ export default function VideoLibraryPage() {
             // Refresh upload limits after deleting
             const limits = await canUploadMoreVideos(session.user.id);
             setUploadLimits(limits);
-        } catch (err: any) {
-            console.error('Error deleting video:', err);
-            alert('Failed to delete video: ' + err.message);
+        } catch (err: unknown) {
+            alert('Failed to delete video: ' + (err instanceof Error ? err.message : 'An unexpected error occurred'));
         } finally {
             setIsDeleting(false);
         }
@@ -191,10 +189,9 @@ export default function VideoLibraryPage() {
         try {
             setIsDownloading(true);
             await forceDownloadFile(video.file_path, video.file_name);
-        } catch (err: any) {
-            console.error('Error downloading video:', err);
-            alert('Failed to download video: ' + err.message);
-        } finally {
+        } catch (err: unknown) {
+            alert('Failed to download video: ' + (err instanceof Error ? err.message : 'An unexpected error occurred'));
+        }finally {
             setIsDownloading(false);
         }
     }, []);

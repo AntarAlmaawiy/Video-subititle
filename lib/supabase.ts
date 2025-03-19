@@ -87,11 +87,48 @@ function getDefaultSubscription() {
     };
 }
 
+// // Update or create a user's subscription in the database
+// // This is a server-side only function - it should only be called from API routes
+// export const upsertUserSubscription = async (
+//     userId: string,
+//     subscriptionData: {
+//         plan_id: string;
+//         status: string;
+//         next_billing_date?: string;
+//         stripe_subscription_id?: string | null;
+//         stripe_customer_id?: string | null;
+//         billing_cycle?: 'monthly' | 'yearly';
+//     }
+// ) => {
+//     // This will be implemented in the API routes using the admin client
+//     console.error('upsertUserSubscription should not be called from client code');
+//     throw new Error('This function can only be called from server-side code');
+// };
+//
+// // Legacy function maintained for compatibility
+// export const updateUserSubscription = async (
+//     userId: string,
+//     subscriptionData: {
+//         plan_id: string;
+//         status: string;
+//         next_billing_date: string;
+//         stripe_subscription_id?: string | null;
+//         stripe_customer_id?: string | null;
+//     }
+// ) => {
+//     console.error('updateUserSubscription should not be called from client code');
+//     throw new Error('This function can only be called from server-side code');
+// };
+
+
+
 // Update or create a user's subscription in the database
 // This is a server-side only function - it should only be called from API routes
 export const upsertUserSubscription = async (
-    userId: string,
-    subscriptionData: {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    _userId: string,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    _subscriptionData: {
         plan_id: string;
         status: string;
         next_billing_date?: string;
@@ -102,21 +139,6 @@ export const upsertUserSubscription = async (
 ) => {
     // This will be implemented in the API routes using the admin client
     console.error('upsertUserSubscription should not be called from client code');
-    throw new Error('This function can only be called from server-side code');
-};
-
-// Legacy function maintained for compatibility
-export const updateUserSubscription = async (
-    userId: string,
-    subscriptionData: {
-        plan_id: string;
-        status: string;
-        next_billing_date: string;
-        stripe_subscription_id?: string | null;
-        stripe_customer_id?: string | null;
-    }
-) => {
-    console.error('updateUserSubscription should not be called from client code');
     throw new Error('This function can only be called from server-side code');
 };
 
@@ -138,7 +160,7 @@ export const uploadVideoToSupabase = async (file: File, userId: string, fileName
 };
 
 // Upload processed video with subtitles - Without bucket verification
-export const uploadProcessedVideo = async (file: File | Blob, userId: string, fileName: string, metadata: any) => {
+export const uploadProcessedVideo = async (file: File | Blob, userId: string, fileName: string, metadata: Record<string, unknown>) => {
     console.log(`Uploading processed video: ${fileName} for user ${userId}`);
 
     try {
@@ -311,6 +333,70 @@ export const getUserVideos = async (userId: string) => {
     }
 };
 
+
+/**
+ * Records that a user has processed a video, updating their usage count
+ * This is called when video processing is complete, even if the user doesn't save to library
+ */
+export async function recordVideoProcessed(userId: string): Promise<void> {
+    if (!userId) return;
+
+    try {
+        console.log(`Recording video processing usage for user: ${userId}`);
+
+        // Get the current date in UTC (YYYY-MM-DD format)
+        const today = new Date().toISOString().split('T')[0];
+
+        // First check if we have an entry for today
+        const { data, error } = await supabase
+            .from('video_processing_usages')
+            .select('count')
+            .eq('user_id', userId)
+            .eq('date', today)
+            .single();
+
+        if (error && error.code !== 'PGRST116') { // PGRST116 is "no rows returned" which is expected for first usage
+            console.error('Error checking video processing usage:', error);
+            throw error;
+        }
+
+        if (data) {
+            // Update existing record
+            const { error: updateError } = await supabase
+                .from('video_processing_usages')
+                .update({ count: data.count + 1 })
+                .eq('user_id', userId)
+                .eq('date', today);
+
+            if (updateError) {
+                console.error('Error updating video processing count:', updateError);
+                throw updateError;
+            }
+
+            console.log(`Updated processing count to ${data.count + 1} for today`);
+        } else {
+            // Insert new record
+            const { error: insertError } = await supabase
+                .from('video_processing_usages')
+                .insert({
+                    user_id: userId,
+                    date: today,
+                    count: 1
+                });
+
+            if (insertError) {
+                console.error('Error inserting video processing usage:', insertError);
+                throw insertError;
+            }
+
+            console.log('Created new processing usage record for today');
+        }
+    } catch (error) {
+        console.error('Error in recordVideoProcessed:', error);
+        // Don't throw, just log the error to prevent breaking the user experience
+    }
+}
+
 // Delete a video
 export const deleteUserVideo = async (userId: string, fileId: string, filePath: string) => {
     console.log(`Deleting video: ${fileId} at path ${filePath} for user ${userId}`);
@@ -428,7 +514,7 @@ function formatBytes(bytes: number) {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }
 
-// Get user's storage statistics with proper plan limits
+// Update this function in your supabase.ts file
 export const getUserStorageStats = async (userId: string) => {
     try {
         console.log(`Getting storage stats for user: ${userId}`);
@@ -437,28 +523,28 @@ export const getUserStorageStats = async (userId: string) => {
         const subscription = await getUserSubscription(userId);
         console.log("Retrieved subscription for storage stats:", subscription);
 
-        let storageLimit = 5 * 1024 * 1024 * 1024; // Default 5GB (free plan)
+        // Define storage limits based on plan (fallback values)
+        const storageLimits = {
+            free: 500 * 1024 * 1024, // 500MB
+            pro: 5 * 1024 * 1024 * 1024, // 5GB instead of 15GB
+            elite: 10 * 1024 * 1024 * 1024 // 10GB
+        };
 
-        // Try to get the storage_gb from plan_details if available
-        if (subscription.plan_details && subscription.plan_details.storage_gb) {
-            // Convert GB to bytes
-            storageLimit = subscription.plan_details.storage_gb * 1024 * 1024 * 1024;
-            console.log(`Using storage limit from database: ${subscription.plan_details.storage_gb}GB (${storageLimit} bytes)`);
+        // Set the storage limit
+        let storageLimit = 500 * 1024 * 1024; // Default 500MB (free plan)
+
+        // Use storage_bytes from plan_details if available
+        if (subscription.plan_details && subscription.plan_details.storage_bytes) {
+            storageLimit = subscription.plan_details.storage_bytes;
+            console.log(`Using storage limit from database: ${formatBytes(storageLimit)}`);
         } else {
-            // Define storage limits based on plan
-            const storageLimits = {
-                free: 5 * 1024 * 1024 * 1024, // 5GB
-                pro: 15 * 1024 * 1024 * 1024, // 15GB
-                elite: 30 * 1024 * 1024 * 1024 // 30GB
-            };
-
             // Get storage limit with fallback to free plan if the plan_id is unexpected
             storageLimit = subscription && subscription.plan_id &&
             storageLimits[subscription.plan_id as keyof typeof storageLimits] !== undefined
                 ? storageLimits[subscription.plan_id as keyof typeof storageLimits]
                 : storageLimits.free;
 
-            console.log(`Using hardcoded storage limit: ${storageLimit} bytes`);
+            console.log(`Using hardcoded storage limit: ${formatBytes(storageLimit)}`);
         }
 
         // Get all videos for the user
@@ -538,7 +624,7 @@ export const getUserStorageStats = async (userId: string) => {
             totalSize: 0,
             videoCount: 0,
             usedStorage: 0,
-            maxStorage: 5 * 1024 * 1024 * 1024, // 5GB (free plan default)
+            maxStorage: 500 * 1024 * 1024, // 500MB (free plan default)
             formatBreakdown: []
         };
     }
@@ -613,6 +699,7 @@ export const getUserDailyVideoUsage = async (userId: string) => {
 };
 
 // Check if user can upload more videos today based on their subscription
+// Modified canUploadMoreVideos function to check the video_processing_usages table
 export const canUploadMoreVideos = async (userId: string) => {
     try {
         console.log(`Checking video upload limits for user: ${userId}`);
@@ -648,22 +735,68 @@ export const canUploadMoreVideos = async (userId: string) => {
             console.log(`Using hardcoded plan limit: ${planLimit} videos per day`);
         }
 
-        // Get daily usage with timestamp data
-        const dailyUsage = await getUserDailyVideoUsage(userId);
-        console.log("Daily video usage:", {
-            count: dailyUsage.count,
-            hasNextUploadTime: !!dailyUsage.nextUploadTime
-        });
+        // Get the current date in UTC (YYYY-MM-DD format)
+        const today = new Date().toISOString().split('T')[0];
 
-        const canUpload = dailyUsage.count < planLimit;
-        console.log(`Can upload more videos? ${canUpload} (${dailyUsage.count}/${planLimit})`);
+        // Query the video_processing_usages table to get today's usage count
+        const { data: usageData, error } = await supabase
+            .from('video_processing_usages')
+            .select('count')
+            .eq('user_id', userId)
+            .eq('date', today)
+            .single();
+
+        if (error && error.code !== 'PGRST116') { // PGRST116 is "no rows returned" which is fine
+            console.error('Error checking video usage:', error);
+            // Return default values instead of throwing
+            return {
+                canUpload: true,
+                currentCount: 0,
+                limit: planLimit,
+                remaining: planLimit,
+                nextUploadTime: undefined
+            };
+        }
+
+        const currentCount = usageData?.count || 0;
+        const remaining = Math.max(0, planLimit - currentCount);
+        const canUpload = currentCount < planLimit;
+
+        // Calculate next upload time if needed (for free plan only)
+        let nextUploadTime: Date | undefined = undefined;
+
+        if (!canUpload && subscription.plan_id === 'free') {
+            // Get the timestamp of the first video processed today
+            // First, try to get from the video_processing_usages table
+            const { data: firstProcessingData, error: firstProcessingError } = await supabase
+                .from('video_processing_usages')
+                .select('created_at')
+                .eq('user_id', userId)
+                .eq('date', today)
+                .order('created_at', { ascending: true })
+                .limit(1)
+                .single();
+
+            if (!firstProcessingError && firstProcessingData?.created_at) {
+                // Use the timestamp from the processing table
+                const firstProcessingTime = new Date(firstProcessingData.created_at);
+                nextUploadTime = new Date(firstProcessingTime);
+                nextUploadTime.setHours(nextUploadTime.getHours() + 24);
+                console.log(`First processing today was at ${firstProcessingTime.toISOString()}, next upload available at ${nextUploadTime.toISOString()}`);
+            } else {
+                // Fallback: use today at midnight + 24 hours
+                nextUploadTime = new Date(today);
+                nextUploadTime.setDate(nextUploadTime.getDate() + 1);
+                console.log(`Using fallback next upload time: ${nextUploadTime.toISOString()}`);
+            }
+        }
 
         return {
             canUpload,
-            currentCount: dailyUsage.count,
+            currentCount,
             limit: planLimit,
-            remaining: Math.max(0, planLimit - dailyUsage.count),
-            nextUploadTime: !canUpload && subscription.plan_id === 'free' ? dailyUsage.nextUploadTime : undefined
+            remaining,
+            nextUploadTime
         };
     } catch (error) {
         console.error('Error checking upload limits:', error);

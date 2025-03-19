@@ -1,17 +1,20 @@
 "use client";
 
 import { signIn } from "next-auth/react";
-import { useSearchParams, useRouter } from "next/navigation";
-import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { useState, Suspense } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import { ArrowLeft } from "lucide-react"; // Import ArrowLeft icon
 
-export default function SignInPage() {
+// Component that safely uses useSearchParams
+import { useSearchParams } from "next/navigation";
+
+function SignInForm() {
     const router = useRouter();
     const searchParams = useSearchParams();
-    const callbackUrl = searchParams.get("callbackUrl") || "/dashboard";
+    const callbackUrl = searchParams?.get("callbackUrl") || "/dashboard";
     const [loading, setLoading] = useState<{
         github?: boolean;
         google?: boolean;
@@ -24,6 +27,7 @@ export default function SignInPage() {
     });
     const [error, setError] = useState("");
     const [debug, setDebug] = useState("");
+    console.log(debug);
 
     const handleOAuthSignIn = async (provider: "github" | "google") => {
         setLoading({ ...loading, [provider]: true });
@@ -88,54 +92,15 @@ export default function SignInPage() {
             // Success!
             setDebug(prev => `${prev}\nNextAuth authentication successful!`);
             router.push(callbackUrl);
-        } catch (error: any) {
+        } catch (error: unknown) {
             console.error("Sign in error:", error);
             setError("An error occurred during sign in");
-            setDebug(`Error: ${error.message}`);
+            setDebug(`Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
             setLoading({ ...loading, credentials: false });
         }
     };
 
     // Direct Supabase sign-in for testing/debugging
-    const handleDirectSignIn = async (e: React.MouseEvent) => {
-        e.preventDefault();
-        setError("");
-        setDebug("");
-        setLoading({ ...loading, direct: true });
-
-        try {
-            console.log("Attempting direct Supabase sign in with:", formData.email);
-
-            const { data, error } = await supabase.auth.signInWithPassword({
-                email: formData.email,
-                password: formData.password,
-            });
-
-            console.log("Direct Supabase sign in result:", { data, error });
-
-            if (error) {
-                setError(`Direct Supabase sign in failed: ${error.message}`);
-                setDebug(JSON.stringify(error, null, 2));
-                setLoading({ ...loading, direct: false });
-                return;
-            }
-
-            setDebug(`Direct Supabase sign in successful!\nUser: ${data.user?.email}\nID: ${data.user?.id}`);
-            setError("");
-            setLoading({ ...loading, direct: false });
-
-            // If direct sign-in worked, show a message that NextAuth should work now too
-            if (data.user) {
-                setDebug(prev => prev + "\n\nDirect Supabase sign-in was successful! Try the regular Sign In button again - it should work now.");
-            }
-        } catch (error: any) {
-            console.error("Direct Supabase sign in error:", error);
-            setError("An error occurred during direct sign in");
-            setDebug(`Exception: ${error.message}`);
-            setLoading({ ...loading, direct: false });
-        }
-    };
-
     const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const { name, value } = e.target;
         setFormData(prev => ({ ...prev, [name]: value }));
@@ -282,5 +247,20 @@ export default function SignInPage() {
                 </div>
             </div>
         </div>
+    );
+}
+
+// Main page component with Suspense boundary
+export default function SignInPage() {
+    return (
+        <Suspense fallback={
+            <div className="flex min-h-screen flex-col items-center justify-center py-12 px-4 sm:px-6 lg:px-8 bg-gray-50">
+                <div className="w-full max-w-md text-center">
+                    <p>Loading sign-in form...</p>
+                </div>
+            </div>
+        }>
+            <SignInForm />
+        </Suspense>
     );
 }

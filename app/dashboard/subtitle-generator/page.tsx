@@ -2,12 +2,12 @@
 
 import { useSession } from "next-auth/react"
 import { useRouter } from "next/navigation"
-import { useEffect, useState } from "react"
+import { useEffect, useState, useCallback } from "react"
 import VideoDropzone from "@/components/VideoDropzone"
 import LanguageSelector from "@/components/LanguageSelector"
 import VideoPlayer from "@/components/VideoPlayer"
 import { Loader2, Clock, AlertCircle } from "lucide-react"
-import { canUploadMoreVideos, getUserSubscription, uploadProcessedVideo } from "@/lib/supabase"
+import { canUploadMoreVideos, getUserSubscription, uploadProcessedVideo, recordVideoProcessed } from "@/lib/supabase"
 import Link from "next/link"
 import { formatDistanceToNow } from 'date-fns'
 
@@ -35,10 +35,12 @@ export default function SubtitleGenerator() {
     const [originalVideoUrl, setOriginalVideoUrl] = useState<string | null>(null)
     const [srtUrl, setSrtUrl] = useState<string | null>(null)
     const [transcription, setTranscription] = useState<string | null>(null)
+    console.log(transcription)
     const [processingProgress, setProcessingProgress] = useState(0)
     const [videoDuration, setVideoDuration] = useState(0)
     const [savedToLibrary, setSavedToLibrary] = useState(false)
     const [saving, setSaving] = useState(false)
+
 
     // New state for plan limits
     const [uploadLimits, setUploadLimits] = useState<{
@@ -63,21 +65,8 @@ export default function SubtitleGenerator() {
     const [timeRemaining, setTimeRemaining] = useState<string>('')
     const [isTimerActive, setIsTimerActive] = useState(false)
 
-    useEffect(() => {
-        setLoading(true)
-        if (isLoaded && !isSignedIn) {
-            router.push("/signin?callbackUrl=/subtitle-generator")
-        } else if (isSignedIn && session?.user?.id) {
-            loadUserPlanLimits().finally(() => {
-                setLoading(false)
-            })
-        } else if (isLoaded) {
-            setLoading(false)
-        }
-    }, [isLoaded, isSignedIn, router, session?.user?.id])
-
     // Load user's plan limits and check if they can upload more videos
-    const loadUserPlanLimits = async () => {
+    const loadUserPlanLimits = useCallback(async () => {
         if (!session?.user?.id) return
 
         try {
@@ -132,7 +121,20 @@ export default function SubtitleGenerator() {
                 remaining: 1
             })
         }
-    }
+    }, [session?.user?.id])
+
+    useEffect(() => {
+        setLoading(true)
+        if (isLoaded && !isSignedIn) {
+            router.push("/signin?callbackUrl=/subtitle-generator")
+        } else if (isSignedIn && session?.user?.id) {
+            loadUserPlanLimits().finally(() => {
+                setLoading(false)
+            })
+        } else if (isLoaded) {
+            setLoading(false)
+        }
+    }, [isLoaded, isSignedIn, router, session?.user?.id, loadUserPlanLimits])
 
     // Update the remaining time display and return if timer is still valid
     const updateRemainingTime = (nextTime: Date): boolean => {
@@ -170,16 +172,22 @@ export default function SubtitleGenerator() {
         }
     }, [videoSource, sourceType])
 
-    const handleVideoSelected = (source: File, type: "file") => {
-        setVideoSource(source)
-        setSourceType(type)
-        setErrorMessage(null)
-        setProcessedVideoUrl(null)
-        setSrtUrl(null)
-        setTranscription(null)
-        setProcessingState("idle")
-        setProcessingProgress(0)
-        setSavedToLibrary(false)
+    const handleVideoSelected = (source: File | null, type: "file") => {
+        // Reset everything when source is null (X button clicked)
+        setVideoSource(source);
+        setSourceType(source ? type : null);
+        setErrorMessage(null);
+        setProcessedVideoUrl(null);
+        setSrtUrl(null);
+        setTranscription(null);
+        setProcessingState("idle");
+        setProcessingProgress(0);
+        setSavedToLibrary(false);
+
+        // Clear the original video URL when removing the video
+        if (!source) {
+            setOriginalVideoUrl(null);
+        }
     }
 
     const processVideo = async () => {
@@ -235,16 +243,20 @@ export default function SubtitleGenerator() {
             setProcessingProgress(100)
             setProcessingState("completed")
 
+            // Record that a video has been processed (regardless of saving to library)
+            await recordVideoProcessed(session.user.id)
+
             // Reload limits after processing is complete
-            loadUserPlanLimits()
-        } catch (error: any) {
+            await loadUserPlanLimits()
+        } catch (error: unknown) {
             console.error("Processing error:", error)
-            if (error.message && error.message.includes("YouTube")) {
+
+            if (error instanceof Error && error.message.includes("YouTube")) {
                 setErrorMessage(
                     "YouTube video processing is currently unavailable. Please download the video manually and upload it as a file instead.",
                 )
             } else {
-                setErrorMessage(error.message || "An unknown error occurred")
+                setErrorMessage(error instanceof Error ? error.message : "An unknown error occurred")
             }
             setProcessingState("error")
         }
@@ -314,10 +326,8 @@ export default function SubtitleGenerator() {
 
             // Reload limits after saving to library
             await loadUserPlanLimits()
-        } catch (error: any) {
-            console.error("Error saving to library:", error)
-            setErrorMessage(`Failed to save to your library: ${error.message}`)
-        } finally {
+        } catch (error: unknown) {
+            setErrorMessage(`Failed to save to your library: ${error instanceof Error ? error.message : 'An unexpected error occurred'}`)        } finally {
             setSaving(false)
         }
     }
@@ -474,7 +484,7 @@ export default function SubtitleGenerator() {
                                             <AlertCircle className="h-16 w-16 text-amber-500 mx-auto mb-4" />
                                             <h3 className="text-lg font-medium text-gray-900 mb-2">Daily Limit Reached</h3>
                                             <p className="text-gray-600 mb-6">
-                                                You've used all {uploadLimits.limit} of your daily video translations.
+                                                You&#39;ve used all {uploadLimits.limit} of your daily video translations.
                                                 {isTimerActive && timeRemaining && (
                                                     <span className="block mt-2">
                                                         Next video will be available <span className="font-medium">{timeRemaining}</span>

@@ -57,7 +57,7 @@ export default function StorageDashboard() {
             try {
                 // Check cache validity
                 const now = Date.now()
-                const shouldRefetch = now - lastFetchRef.current > CACHE_DURATION || !stats
+                const shouldRefetch = now - lastFetchRef.current > CACHE_DURATION || !stats || !subscription
 
                 if (!shouldRefetch && stats && subscription) {
                     console.log("Using cached storage data")
@@ -79,16 +79,15 @@ export default function StorageDashboard() {
 
                 // Update cache timestamp
                 lastFetchRef.current = now
-            } catch (err: any) {
-                console.error("Error fetching storage stats:", err)
-                setError(err.message || "Failed to load storage statistics")
+            } catch (err: unknown) {
+                setError(err instanceof Error ? err.message : "Failed to load storage statistics")
             } finally {
                 setLoading(false)
             }
         }
 
         fetchStorageStats()
-    }, [session?.user?.id, stats])
+    }, [session?.user?.id, stats, subscription])
 
     // Memoized values
     const storageUsedPercent = stats ? Math.round((stats.usedStorage / stats.maxStorage) * 100) : 0

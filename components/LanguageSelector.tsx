@@ -149,11 +149,6 @@ const LanguageSelector = ({
     const [showAllTarget, setShowAllTarget] = useState(false);
 
     // Helper function to get language name by code
-    const getLanguageName = (code: string) => {
-        const language = [...TOP_LANGUAGES, ...ALL_LANGUAGES].find((lang) => lang.code === code);
-        return language ? language.name : code;
-    };
-
     return (
         <div className="max-w-2xl mx-auto py-6 space-y-8">
             <div>

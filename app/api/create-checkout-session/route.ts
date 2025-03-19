@@ -249,10 +249,9 @@ export async function POST(request: Request) {
         console.log(`✅ Created checkout session ${checkoutSession.id} for user ${session.user.id}, plan ${planId}`);
 
         return NextResponse.json({ sessionUrl: checkoutSession.url });
-    } catch (error: any) {
+    } catch (error: unknown) {
         console.error('❌ Error creating checkout session:', error);
-        return NextResponse.json(
-            { message: error.message || 'Error creating checkout session' },
+        return NextResponse.json({message: error instanceof Error ? error.message : 'Error creating checkout session'},
             { status: 500 }
         );
     }

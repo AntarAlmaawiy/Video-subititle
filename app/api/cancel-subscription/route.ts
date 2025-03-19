@@ -9,7 +9,7 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || '', {
     apiVersion: '2025-02-24.acacia',
 });
 
-export async function POST(request: Request) {
+export async function POST() {
     try {
         // Get the user session
         const session = await auth();
@@ -68,7 +68,7 @@ export async function POST(request: Request) {
             console.log(`Subscription updated in Stripe, status: ${canceledSubscription.status}, cancel_at_period_end: ${canceledSubscription.cancel_at_period_end}`);
 
             // Update only this specific user's subscription
-            const { data, error: updateError } = await adminSupabase
+            const { error: updateError } = await adminSupabase
                 .from('user_subscriptions')
                 .update({
                     status: 'canceled',  // Use 'canceled' not 'canceling'
@@ -148,17 +148,18 @@ export async function POST(request: Request) {
                 status: 'canceled',
                 willEndOn: userSubscription.next_billing_date
             });
-        } catch (stripeError: any) {
+        } catch (stripeError: unknown) {
             console.error('Stripe cancellation error:', stripeError);
             return NextResponse.json(
-                { message: `Error canceling subscription: ${stripeError.message}` },
+                {
+                    message: `Error canceling subscription: ${stripeError instanceof Error ? stripeError.message : 'An unexpected error occurred'}`},
                 { status: 500 }
             );
         }
-    } catch (error: any) {
+    } catch (error: unknown) {
         console.error('Error in cancel-subscription:', error);
         return NextResponse.json(
-            { message: error.message || 'An unknown error occurred' },
+            {message: error instanceof Error ? error.message : 'An unknown error occurred'},
             { status: 500 }
         );
     }

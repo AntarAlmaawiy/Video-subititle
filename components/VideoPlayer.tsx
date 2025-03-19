@@ -36,6 +36,7 @@ const VideoPlayer = ({
     const [loadingProgress, setLoadingProgress] = useState(0);
     const [isDownloading, setIsDownloading] = useState(false);
 
+    console.log(isFullscreen)
     useEffect(() => {
         if (!videoUrl) return;
 

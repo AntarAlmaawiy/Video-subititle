@@ -1,13 +1,22 @@
 // lib/video-processing/subtitle-embedder.ts
 import { extractAudio, embedSubtitles, downloadVideo, saveProcessedVideo } from './ffmpeg';
 import { transcribeAudio, translateText, formatToSRT } from '../ai/openai';
-import crypto from 'crypto';
 
 interface SubtitleProcessingResult {
     videoUrl: string;
     srtContent: string;
     transcription: string;
     translation: string;
+}
+
+// Import types from OpenAI
+import type { TranscriptionSegment as OpenAITranscriptionSegment } from 'openai/resources/audio/transcriptions';
+
+// Define a type for the transcription result that works with OpenAI's return type
+type TranscriptionResult = {
+    text: string;
+    segments?: OpenAITranscriptionSegment[];
+    [key: string]: unknown;
 }
 
 /**
@@ -43,7 +52,7 @@ export async function processVideoWithSubtitles(
 
         // Step 3: Transcribe audio
         onProgress?.(30, 'transcribing');
-        const transcriptionResult = await transcribeAudio(audioBuffer, sourceLanguage);
+        const transcriptionResult = await transcribeAudio(audioBuffer, sourceLanguage) as unknown as TranscriptionResult;
         const transcription = transcriptionResult.text;
 
         // Step 4: Translate transcription
@@ -55,7 +64,7 @@ export async function processVideoWithSubtitles(
 
         // Create SRT content from the segments with translated text
         // This assumes transcriptionResult has segments with start/end times
-        const segments = transcriptionResult.segments.map((segment: any, index: number) => {
+        const segments = (transcriptionResult.segments || []).map((segment, index: number) => {
             const lines = translatedText.split('\n');
             // Map each original segment to a translated one
             // This is a simple approach - a more sophisticated one would align sentences
@@ -73,8 +82,8 @@ export async function processVideoWithSubtitles(
 
         // Step 7: Save processed video and get URL
         onProgress?.(90, 'saving');
-        const filename = `video-${crypto.randomBytes(8).toString('hex')}.mp4`;
-        const videoUrl = await saveProcessedVideo(processedVideoBuffer, filename);
+        // Save processed video and get URL
+        const videoUrl = await saveProcessedVideo(processedVideoBuffer);
 
         // Complete
         onProgress?.(100, 'completed');

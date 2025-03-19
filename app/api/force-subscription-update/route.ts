@@ -55,11 +55,18 @@ export async function GET() {
                     const { data: cancelData, error: cancelError } = await adminSupabase
                         .from('user_subscriptions')
                         .update({
-                            status: 'canceled' as any, // Changed from 'canceling'
+                            status: 'canceled' as never, // Changed from 'canceling'
                             updated_at: new Date().toISOString()
                         })
                         .eq('user_id', session.user.id)
                         .select();
+
+                    // const { data: cancelData, error: cancelError } = await adminSupabase
+                    //     .from('user_subscriptions')
+                    //     .update({
+                    //         status: 'canceled' as SubscriptionStatus,
+                    //         updated_at: new Date().toISOString()
+                    //     })
 
                     if (cancelError) {
                         console.error(`Error updating to canceled status: ${cancelError.message}`);
@@ -182,12 +189,21 @@ export async function GET() {
                     .from('user_subscriptions')
                     .update({
                         plan_id: stripePlanId,
-                        status: statusToUse as any, // Type assertion to bypass TypeScript check
+                        status: statusToUse as never, // Type assertion to bypass TypeScript check
                         next_billing_date: new Date(subscription.current_period_end * 1000).toISOString().split('T')[0],
                         updated_at: new Date().toISOString()
                     })
                     .eq('user_id', session.user.id)
                     .select();
+
+                // const { data, error } = await adminSupabase
+                //     .from('user_subscriptions')
+                //     .update({
+                //         plan_id: stripePlanId,
+                //         status: statusToUse as SubscriptionStatus,
+                //         next_billing_date: new Date(subscription.current_period_end * 1000).toISOString().split('T')[0],
+                //         updated_at: new Date().toISOString()
+                //     })
 
                 if (error) {
                     console.error('Error updating subscription:', error);

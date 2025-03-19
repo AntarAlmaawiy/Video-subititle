@@ -100,7 +100,7 @@ export default function PrivacyPolicy() {
                             and we cannot guarantee the absolute security of our systems.
                         </p>
 
-                        <h2 className="text-2xl font-bold text-gray-900 mt-8 mb-4">Children's Privacy</h2>
+                        <h2 className="text-2xl font-bold text-gray-900 mt-8 mb-4">Children&#39;s Privacy</h2>
                         <p className="text-gray-700 leading-relaxed mb-6">
                             Our services are not directed to children under 16. We do not knowingly collect personal information from
                             children under 16. If you believe a child has provided us with personal information, please contact us.
@@ -115,16 +115,7 @@ export default function PrivacyPolicy() {
                         <h2 className="text-2xl font-bold text-gray-900 mt-8 mb-4">Changes to This Policy</h2>
                         <p className="text-gray-700 leading-relaxed mb-6">
                             We may update this Privacy Policy from time to time. We will notify you of material changes by posting the
-                            new Privacy Policy on this page and updating the "Last Updated" date.
-                        </p>
-
-                        <h2 className="text-2xl font-bold text-gray-900 mt-8 mb-4">Contact Us</h2>
-                        <p className="text-gray-700 leading-relaxed">
-                            If you have questions or concerns about this Privacy Policy or our data practices, please contact us at:
-                        </p>
-                        <p className="text-gray-700 leading-relaxed">
-                            Email: <a href="mailto:privacy@subtranslate.com" className="text-blue-600 hover:text-blue-800">privacy@subtranslate.com</a><br />
-                            Address: 123 Translation Avenue, San Francisco, CA 94105
+                            new Privacy Policy on this page and updating the &#34;Last Updated&#34; date.
                         </p>
                     </div>
                 </div>
