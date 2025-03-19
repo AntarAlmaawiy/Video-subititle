@@ -80,6 +80,14 @@ export const { handlers: { GET, POST }, auth, signIn, signOut } = NextAuth({
             }
             return session;
         },
+        // Add this redirect callback to handle URLs properly
+        async redirect({ url, baseUrl }) {
+            // Allows relative callback URLs
+            if (url.startsWith("/")) return `${baseUrl}${url}`;
+            // Allows callback URLs on the same origin
+            else if (new URL(url).origin === baseUrl) return url;
+            return baseUrl;
+        }
     },
     debug: true, // Enable debug mode
     secret: process.env.NEXTAUTH_SECRET,
