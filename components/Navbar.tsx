@@ -51,7 +51,7 @@ const Navbar = () => {
                                     <Link href="/#pricing" className="text-gray-700 hover:text-gray-900">Pricing</Link>                                </>
                             ) : (
                                 <>
-                                    <Link href="/manage-plan" className="text-gray-700 hover:text-gray-900">Manage Plan</Link>
+                                    <Link href="/dashboard/manage-plan" className="text-gray-700 hover:text-gray-900">Manage Plan</Link>
                                     <Link href="/dashboard" className="text-gray-700 hover:text-gray-900">Dashboard</Link>
                                 </>
                             )}
