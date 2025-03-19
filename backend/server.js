@@ -571,22 +571,3 @@ app.use((req, res, next) => {
     next();
 });
 
-// Fetch the data with proper headers
-const response = await fetch(
-    `${process.env.NEXT_PUBLIC_SUPABASE_URL}/rest/v1/video_processing_usages?select=count&user_id=eq.${userId}&date=eq.${currentDate}`,
-    {
-        headers: {
-            'apikey': process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
-            'Authorization': `Bearer ${process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY}`,
-            'Content-Type': 'application/json',
-            'Accept': 'application/json'
-        }
-    }
-);
-
-// Parse the JSON response
-const data = await response.json();
-
-// Now you can use the data
-console.log(data);
-// Or assign it to state, render it, etc.
