@@ -86,7 +86,6 @@ const upload = multer({
     limits: { fileSize: 500 * 1024 * 1024 } // 500MB limit
 });
 
-// Enable CORS with your frontend domains
 app.use(cors({
     origin: [
         'https://www.sub0-translate.com',
@@ -98,6 +97,10 @@ app.use(cors({
     credentials: true,
     optionsSuccessStatus: 204
 }));
+
+// Also ensure more generous body size limits
+app.use(express.json({ limit: '500mb' }));
+app.use(express.urlencoded({ extended: true, limit: '500mb' }));
 
 // Set longer default timeouts
 app.use((req, res, next) => {

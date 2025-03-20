@@ -14,8 +14,6 @@ import { formatDistanceToNow } from 'date-fns'
 type VideoSource = File | string | null
 type ProcessingState = "idle" | "uploading" | "processing" | "downloading" | "completed" | "error"
 
-// Replace with your standalone API service URL
-const VIDEO_PROCESSING_API = "/api/proxy-video"
 
 export default function SubtitleGenerator() {
     const { data: session, status } = useSession()
@@ -204,6 +202,9 @@ export default function SubtitleGenerator() {
             setProcessingProgress(10);
             setErrorMessage(null);
 
+            // Important: Use the direct backend URL instead of the proxy
+            const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://159.89.123.141:3001";
+
             let formData;
             if (sourceType === "file") {
                 formData = new FormData();
@@ -225,9 +226,11 @@ export default function SubtitleGenerator() {
                 });
             }, 2000);
 
-            const response = await fetch(`${VIDEO_PROCESSING_API}`, {
+            // Upload directly to your backend server instead of using the proxy
+            const response = await fetch(`${BACKEND_URL}/api/process-video`, {
                 method: "POST",
-                body: formData
+                body: formData,
+                // Note: No need to set Content-Type, the browser will set it with the correct boundary for FormData
             });
 
             clearInterval(progressInterval);
