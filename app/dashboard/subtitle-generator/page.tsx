@@ -204,12 +204,12 @@ export default function SubtitleGenerator() {
             setProcessingProgress(20);
             setProcessingState("processing");
 
-            // Simulate progress
+            // Simulate progress for better UX
             const progressInterval = setInterval(() => {
                 setProcessingProgress(prev => Math.min(prev + 1, 90));
             }, 1000);
 
-            // Use the proxy API route
+            // Send the request to your proxy endpoint
             const response = await fetch("/api/proxy-video", {
                 method: "POST",
                 body: formData
@@ -224,7 +224,7 @@ export default function SubtitleGenerator() {
 
             const data = await response.json();
 
-            // Use the proxied URLs
+            // Using the returned mock URLs - these will be served from your public folder
             setProcessedVideoUrl(data.videoUrl);
             setSrtUrl(data.srtUrl);
             setTranscription(data.transcription);
@@ -232,9 +232,13 @@ export default function SubtitleGenerator() {
             setProcessingProgress(100);
             setProcessingState("completed");
 
-            // Record video processed
-            await recordVideoProcessed(session.user.id);
-            await loadUserPlanLimits();
+            // Record that a video has been processed
+            try {
+                await recordVideoProcessed(session.user.id);
+                await loadUserPlanLimits();
+            } catch (error) {
+                console.error("Error recording video processed:", error);
+            }
         } catch (error) {
             console.error("Processing error:", error);
             setErrorMessage(error instanceof Error ? error.message : "An unknown error occurred");

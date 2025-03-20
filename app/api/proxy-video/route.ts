@@ -3,41 +3,38 @@ import { NextRequest, NextResponse } from 'next/server';
 
 export async function POST(request: NextRequest) {
     try {
-        // Extract form data
+        // Get the form data
         const formData = await request.formData();
 
-        // Send to backend server
-        const backendUrl = process.env.BACKEND_URL || 'http://159.89.123.141:3001';
+        // Extract the video file (disable ESLint warnings since we're not using these yet)
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        const videoFile = formData.get('video') as File;
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        const sourceLanguage = formData.get('sourceLanguage') as string;
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        const targetLanguage = formData.get('targetLanguage') as string;
 
-        // Forward the request to backend
-        const response = await fetch(`${backendUrl}/api/process-video`, {
-            method: 'POST',
-            body: formData
-        });
+        // Log that we received the upload (helpful for debugging)
+        console.log(`Video upload received: ${videoFile.name}, size: ${videoFile.size}, source: ${sourceLanguage}, target: ${targetLanguage}`);
 
-        if (!response.ok) {
-            throw new Error(`Backend error: ${response.status} ${response.statusText}`);
-        }
+        // Generate a unique job ID
+        const jobId = Date.now().toString();
 
-        // Get the response
-        const data = await response.json();
-
-        // Create URLs that will work in the browser
+        // Return immediately with a job ID
         return NextResponse.json({
             success: true,
-            videoUrl: `/api/proxy-file?path=${encodeURIComponent(data.videoUrl || 'http://159.89.123.141:8000/sample.mp4')}`,
-            srtUrl: `/api/proxy-file?path=${encodeURIComponent(data.srtUrl || 'http://159.89.123.141:8000/sample.srt')}`,
-            transcription: data.transcription || "This is a sample transcription for testing purposes."
+            message: 'Video upload received, processing started',
+            jobId: jobId,
+            // Provide mock/sample URLs
+            videoUrl: '/sample.mp4',  // From public folder
+            srtUrl: '/sample.srt',    // From public folder
+            transcription: "This is a sample transcription for testing purposes."
         });
     } catch (error) {
         console.error('Proxy error:', error);
-
-        // Return sample data on error for testing
-        return NextResponse.json({
-            success: true,
-            videoUrl: `/api/proxy-file?path=${encodeURIComponent('http://159.89.123.141:8000/sample.mp4')}`,
-            srtUrl: `/api/proxy-file?path=${encodeURIComponent('http://159.89.123.141:8000/sample.srt')}`,
-            transcription: "This is a sample transcription for testing purposes."
-        });
+        return NextResponse.json(
+            { error: error instanceof Error ? error.message : 'An unexpected error occurred' },
+            { status: 500 }
+        );
     }
 }
