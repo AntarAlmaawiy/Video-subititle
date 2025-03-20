@@ -13,11 +13,18 @@ export async function POST(request: NextRequest): Promise<Response> {
         // Add debugging information
         console.log("Received file:", formData.get('video'));
 
-        // This is a temporary mock response for testing
+        // Instead of example.com, use your actual server URL
+        const serverBaseUrl = "http://159.89.123.141:3001/temp";
+
+        // Generate unique filenames for mock content
+        const timestamp = Date.now();
+        const videoUrl = `${serverBaseUrl}/sample-${timestamp}.mp4`;
+        const srtUrl = `${serverBaseUrl}/sample-${timestamp}.srt`;
+
         return NextResponse.json({
             success: true,
-            videoUrl: "https://example.com/sample.mp4", // Mock URL
-            srtUrl: "https://example.com/sample.srt", // Mock URL
+            videoUrl: videoUrl,
+            srtUrl: srtUrl,
             transcription: "This is a sample transcription. The real processing would happen on your backend server.",
         });
     } catch (error: unknown) {

@@ -9,8 +9,20 @@ if (!supabaseUrl || !supabaseAnonKey) {
 }
 
 // Create the Supabase client
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
-
+export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+    auth: {
+        autoRefreshToken: true,
+        persistSession: true,
+    },
+    global: {
+        headers: {
+            'apikey': supabaseAnonKey,
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+            'X-Client-Info': 'supabase-js/2.x'
+        },
+    },
+});
 // User authentication functions
 export const signUpWithEmail = async (email: string, password: string, username: string) => {
     const { data, error } = await supabase.auth.signUp({
