@@ -83,7 +83,7 @@ const storage = multer.diskStorage({
 
 const upload = multer({
     storage: storage,
-    limits: { fileSize: 100 * 1024 * 1024 } // 100MB limit
+    limits: { fileSize: 500 * 1024 * 1024 } // 500MB limit
 });
 
 // Enable CORS with your frontend domains
@@ -91,14 +91,23 @@ app.use(cors({
     origin: [
         'https://www.sub0-translate.com',
         'https://video-subtitle-git-main-antaralmaawiys-projects.vercel.app',
-        'https://video-subtitle-4pzak8swt-antaralmaawiys-projects.vercel.app'
+        'https://video-subtitle-4pzak8swt-antaralmaawiys-projects.vercel.app',
+        'http://localhost:3000'
     ],
-    methods: ['GET', 'POST'],
+    methods: ['GET', 'POST', 'OPTIONS'],
     credentials: true,
     optionsSuccessStatus: 204
 }));
 
-app.use(express.json());
+// Set longer default timeouts
+app.use((req, res, next) => {
+    req.setTimeout(600000); // 10 minutes
+    res.setTimeout(600000); // 10 minutes
+    next();
+});
+
+app.use(express.json({ limit: '500mb' }));
+app.use(express.urlencoded({ extended: true, limit: '500mb' }));
 
 // Serve temporary files (they'll be cleaned up later)
 app.use('/temp', express.static(tempDir));
@@ -171,12 +180,32 @@ app.post('/api/process-youtube', async (req, res) => {
     }
 });
 
-// API endpoint to process an uploaded video
+// API endpoint to process an uploaded video - updated with streaming response
 app.post('/api/process-video', upload.single('video'), async (req, res) => {
     let videoPath = '';
     let audioPath = '';
     let srtPath = '';
     let outputPath = '';
+
+    // Set longer timeouts
+    req.setTimeout(600000); // 10 minutes
+    res.setTimeout(600000); // 10 minutes
+
+    // Set headers for streaming response
+    res.writeHead(200, {
+        'Content-Type': 'application/json',
+        'Transfer-Encoding': 'chunked',
+        'Connection': 'keep-alive',
+        'Cache-Control': 'no-cache',
+        'X-Accel-Buffering': 'no' // Disable Nginx buffering
+    });
+
+    // Send initial progress update
+    sendProgressUpdate(res, {
+        status: 'starting',
+        message: 'Received upload request',
+        progress: 5
+    });
 
     try {
         console.log('Received request to process uploaded video');
@@ -184,10 +213,16 @@ app.post('/api/process-video', upload.single('video'), async (req, res) => {
         const { sourceLanguage = 'auto', targetLanguage = 'en' } = req.body;
 
         if (!videoFile) {
-            return res.status(400).json({ error: 'No video file provided' });
+            sendErrorAndEnd(res, 'No video file provided');
+            return;
         }
 
         console.log('Processing file:', videoFile.originalname, 'Size:', (videoFile.size / (1024 * 1024)).toFixed(2), 'MB');
+        sendProgressUpdate(res, {
+            status: 'uploading',
+            message: 'Video file received, beginning processing',
+            progress: 10
+        });
 
         const videoId = path.basename(videoFile.path, path.extname(videoFile.path));
         videoPath = videoFile.path;
@@ -197,6 +232,12 @@ app.post('/api/process-video', upload.single('video'), async (req, res) => {
 
         // Step 2: Extract audio from the video with optimized settings
         console.log('Extracting audio with optimized settings for transcription...');
+        sendProgressUpdate(res, {
+            status: 'processing',
+            message: 'Extracting audio from video',
+            progress: 20
+        });
+
         try {
             await new Promise((resolve, reject) => {
                 ffmpeg(videoPath)
@@ -211,9 +252,23 @@ app.post('/api/process-video', upload.single('video'), async (req, res) => {
                     })
                     .on('progress', (progress) => {
                         console.log(`Audio extraction progress: ${progress.percent ? progress.percent.toFixed(1) : 'N/A'}%`);
+                        // Send progress update to client
+                        if (progress.percent) {
+                            const overallProgress = 20 + (progress.percent * 0.1); // Map to 20-30% range
+                            sendProgressUpdate(res, {
+                                status: 'processing',
+                                message: 'Extracting audio from video',
+                                progress: Math.min(30, Math.floor(overallProgress))
+                            });
+                        }
                     })
                     .on('end', () => {
                         console.log('Audio extraction completed');
+                        sendProgressUpdate(res, {
+                            status: 'processing',
+                            message: 'Audio extraction completed',
+                            progress: 30
+                        });
                         resolve();
                     })
                     .on('error', (err) => {
@@ -228,6 +283,12 @@ app.post('/api/process-video', upload.single('video'), async (req, res) => {
 
         // Step 3: Transcribe the audio using Whisper API with better settings for accuracy
         console.log('Transcribing audio with Whisper API...');
+        sendProgressUpdate(res, {
+            status: 'processing',
+            message: 'Transcribing audio using AI',
+            progress: 35
+        });
+
         let transcriptionResponse;
         let retryCount = 0;
         const maxRetries = 3;
@@ -260,10 +321,20 @@ app.post('/api/process-video', upload.single('video'), async (req, res) => {
                 });
 
                 console.log('Transcription completed successfully');
+                sendProgressUpdate(res, {
+                    status: 'processing',
+                    message: 'Transcription completed',
+                    progress: 45
+                });
                 break; // Success, exit the loop
             } catch (err) {
                 retryCount++;
                 console.error(`Transcription attempt ${retryCount} failed:`, err);
+                sendProgressUpdate(res, {
+                    status: 'processing',
+                    message: `Transcription attempt ${retryCount} failed, retrying...`,
+                    progress: 35 + (retryCount * 2)
+                });
 
                 if (retryCount >= maxRetries) {
                     throw new Error(`Failed to transcribe after ${maxRetries} attempts: ${err.message}`);
@@ -291,6 +362,12 @@ app.post('/api/process-video', upload.single('video'), async (req, res) => {
         console.log('Transcription sample:', finalText.substring(0, 100) + '...');
 
         if (sourceLanguage !== targetLanguage && targetLanguage !== 'auto') {
+            sendProgressUpdate(res, {
+                status: 'processing',
+                message: `Translating content to ${targetLanguage}`,
+                progress: 50
+            });
+
             if (hasSegments) {
                 // Translate each segment individually to preserve timing
                 console.log(`Translating ${transcriptionResponse.segments.length} segments from ${sourceLanguage} to ${targetLanguage}...`);
@@ -320,6 +397,13 @@ app.post('/api/process-video', upload.single('video'), async (req, res) => {
                         });
 
                         console.log(`Translated segment ${i+1}/${transcriptionResponse.segments.length}`);
+                        // Update progress based on translation progress (50-60% range)
+                        const segmentProgress = 50 + (10 * ((i + 1) / transcriptionResponse.segments.length));
+                        sendProgressUpdate(res, {
+                            status: 'processing',
+                            message: `Translating segments (${i+1}/${transcriptionResponse.segments.length})`,
+                            progress: Math.min(60, Math.floor(segmentProgress))
+                        });
                     } catch (err) {
                         console.error(`Error translating segment ${i+1}:`, err);
                         // On error, keep the original text
@@ -328,6 +412,12 @@ app.post('/api/process-video', upload.single('video'), async (req, res) => {
                 }
 
                 // Also translate the full text for the final transcription
+                sendProgressUpdate(res, {
+                    status: 'processing',
+                    message: 'Finalizing translation',
+                    progress: 62
+                });
+
                 const fullTranslationResponse = await openai.chat.completions.create({
                     model: 'gpt-3.5-turbo',
                     messages: [
@@ -345,6 +435,11 @@ app.post('/api/process-video', upload.single('video'), async (req, res) => {
 
                 finalText = fullTranslationResponse.choices[0]?.message?.content || finalText;
                 console.log('Full translation completed successfully');
+                sendProgressUpdate(res, {
+                    status: 'processing',
+                    message: 'Translation completed',
+                    progress: 65
+                });
             } else {
                 // Fallback to translating the entire text if no segments available
                 console.log(`Translating full text from ${sourceLanguage} to ${targetLanguage}...`);
@@ -366,14 +461,30 @@ app.post('/api/process-video', upload.single('video'), async (req, res) => {
 
                 finalText = translationResponse.choices[0]?.message?.content || finalText;
                 console.log('Translation completed successfully');
+                sendProgressUpdate(res, {
+                    status: 'processing',
+                    message: 'Translation completed',
+                    progress: 65
+                });
             }
         } else {
             // If no translation needed, just copy the segments
             translatedSegments = transcriptionResponse.segments || [];
+            sendProgressUpdate(res, {
+                status: 'processing',
+                message: 'Using original language, skipping translation',
+                progress: 65
+            });
         }
 
         // Step 5: Create SRT file with proper timing
         console.log('Creating SRT file...');
+        sendProgressUpdate(res, {
+            status: 'processing',
+            message: 'Creating subtitle file',
+            progress: 70
+        });
+
         try {
             const segments = translatedSegments.length > 0 ? translatedSegments : transcriptionResponse.segments || [];
             let srtContent = '';
@@ -393,8 +504,14 @@ app.post('/api/process-video', upload.single('video'), async (req, res) => {
             throw new Error(`Failed to create SRT file: ${error.message}`);
         }
 
-        // Step 6: Embed subtitles into video with refined styling (smaller, no background)
+        // Step 6: Embed subtitles into video with refined styling
         console.log('Embedding refined subtitles...');
+        sendProgressUpdate(res, {
+            status: 'processing',
+            message: 'Embedding subtitles into video',
+            progress: 75
+        });
+
         try {
             // Escape the path for use in the subtitles filter
             const escapedSrtPath = srtPath.replace(/\\/g, '\\\\').replace(/:/g, '\\:');
@@ -415,9 +532,23 @@ app.post('/api/process-video', upload.single('video'), async (req, res) => {
                     })
                     .on('progress', (progress) => {
                         console.log(`Subtitle embedding progress: ${progress.percent ? progress.percent.toFixed(1) : 'N/A'}%`);
+                        // Update progress (75-95% range)
+                        if (progress.percent) {
+                            const overallProgress = 75 + (progress.percent * 0.2);
+                            sendProgressUpdate(res, {
+                                status: 'processing',
+                                message: 'Embedding subtitles into video',
+                                progress: Math.min(95, Math.floor(overallProgress))
+                            });
+                        }
                     })
                     .on('end', () => {
                         console.log('Subtitle embedding completed');
+                        sendProgressUpdate(res, {
+                            status: 'finalizing',
+                            message: 'Video processing completed',
+                            progress: 95
+                        });
                         resolve();
                     })
                     .on('error', (err) => {
@@ -441,19 +572,24 @@ app.post('/api/process-video', upload.single('video'), async (req, res) => {
         });
 
         // Schedule cleanup for these files
-        // We'll keep them for 2 hours to allow download, then clean them up
+        // We'll keep them for A hours to allow download, then clean them up
         const filesToCleanup = [videoPath, audioPath, srtPath, outputPath];
-        scheduleFileCleanup(filesToCleanup, 2 * 60 * 60 * 1000); // 2 hours
+        scheduleFileCleanup(filesToCleanup, 4 * 60 * 60 * 1000); // 4 hours
 
-        res.json({
-            success: true,
+        // Send final response
+        sendProgressUpdate(res, {
+            status: 'complete',
+            message: 'Video processing complete',
+            progress: 100,
             videoUrl: processedVideoUrl,
             srtUrl: srtUrl,
             transcription: finalText,
-            // Add these so frontend knows these are temporary links
             temporary: true,
-            expiresIn: '2 hours'
+            expiresIn: '4 hours'
         });
+
+        // End the response
+        res.end();
 
     } catch (error) {
         console.error('Error processing uploaded video:', error);
@@ -479,7 +615,8 @@ app.post('/api/process-video', upload.single('video'), async (req, res) => {
             errorMessage = `Server error: ${error.message}`;
         }
 
-        res.status(500).json({ error: errorMessage });
+        // Send error response
+        sendErrorAndEnd(res, errorMessage);
 
         // Clean up any files that were created
         try {
@@ -494,6 +631,34 @@ app.post('/api/process-video', upload.single('video'), async (req, res) => {
         }
     }
 });
+
+// Helper function to send progress updates
+function sendProgressUpdate(res, data) {
+    try {
+        res.write(JSON.stringify(data) + '\n');
+    } catch (err) {
+        console.error('Error sending progress update:', err);
+    }
+}
+
+// Helper function to send error and end response
+function sendErrorAndEnd(res, errorMessage) {
+    try {
+        res.write(JSON.stringify({
+            status: 'error',
+            error: errorMessage
+        }) + '\n');
+        res.end();
+    } catch (err) {
+        console.error('Error sending error response:', err);
+        // Try to end the response anyway
+        try {
+            res.end();
+        } catch (endErr) {
+            console.error('Error ending response after error:', endErr);
+        }
+    }
+}
 
 // Helper function to format time for SRT (00:00:00,000)
 function formatSRTTime(seconds) {
@@ -567,11 +732,3 @@ app.listen(port, () => {
     console.log(`Video processing server running on port ${port}`);
     console.log(`Test the server by visiting http://localhost:${port}/api/test`);
 });
-
-app.use((req, res, next) => {
-    res.header('Access-Control-Allow-Origin', '*');
-    res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PUT, DELETE');
-    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
-    next();
-});
-

@@ -1,13 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-// Add this type extension to the top of your file
-interface ExtendedRequestInit extends RequestInit {
-    duplex?: 'half';
-}
+export const config = {
+    runtime: 'edge',
+};
 
-export async function POST(request: NextRequest) {
+export async function POST(request: NextRequest): Promise<Response> {
     try {
-        // Get the backend URL from environment variables
         const backendUrl = process.env.VIDEO_PROCESSING_API;
 
         if (!backendUrl) {
@@ -17,39 +15,67 @@ export async function POST(request: NextRequest) {
             );
         }
 
-        // Use the extended type
-        const requestInit: ExtendedRequestInit = {
+        // Create a ReadableStream to stream the backend response
+        const { readable, writable } = new TransformStream();
+
+        // Clone the request to forward it
+        const clonedRequest = request.clone();
+
+        // Get the content type
+        const contentType = request.headers.get('content-type');
+
+        // Start the fetch to the backend
+        fetch(`${backendUrl}/api/process-video`, {
             method: 'POST',
-            body: request.body,
+            body: clonedRequest.body,
             headers: {
-                ...(request.headers.get('content-type') ?
-                    {'Content-Type': request.headers.get('content-type')!} : {})
+                ...(contentType ? {'Content-Type': contentType} : {})
             },
-            duplex: 'half'
-        };
-
-        // Forward the request to your backend server
-        const response = await fetch(`${backendUrl}/api/process-video`, requestInit);
-
-        // Rest of your code remains the same
-        if (!response.ok) {
-            const errorText = await response.text();
-            let errorData;
-            try {
-                errorData = JSON.parse(errorText);
-            } catch {
-                errorData = { error: errorText };
+            // Using the correct approach - omit the duplex property entirely
+        }).then(async response => {
+            if (!response.body) {
+                writable.getWriter().close();
+                return;
             }
-            return NextResponse.json(
-                { error: errorData.error || 'Backend processing failed' },
-                { status: response.status }
-            );
-        }
 
-        // Return the response from your backend
-        const data = await response.json();
-        return NextResponse.json(data);
+            // Stream each chunk from backend to client
+            const reader = response.body.getReader();
+            const writer = writable.getWriter();
 
+            async function pump(): Promise<void> {
+                try {
+                    while (true) {
+                        const { done, value } = await reader.read();
+
+                        if (done) {
+                            await writer.close();
+                            break;
+                        }
+
+                        await writer.write(value);
+                    }
+                } catch (e) {
+                    console.error("Error in pump:", e);
+                    await writer.close();
+                }
+            }
+
+            // Start pumping data
+            pump().catch(err => {
+                console.error("Error in pump promise:", err);
+            });
+        }).catch(err => {
+            console.error("Error streaming response:", err);
+            // Close the writer in case of error
+            writable.getWriter().close();
+        });
+
+        // Return a streaming response
+        return new Response(readable, {
+            headers: {
+                'Content-Type': 'application/json',
+            }
+        });
     } catch (error: unknown) {
         console.error('Proxy error:', error);
         return NextResponse.json(

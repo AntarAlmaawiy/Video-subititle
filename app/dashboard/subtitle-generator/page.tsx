@@ -189,79 +189,146 @@ export default function SubtitleGenerator() {
             setOriginalVideoUrl(null);
         }
     }
-
     const processVideo = async () => {
-        if (!videoSource || !session?.user?.id) return
+        if (!videoSource || !session?.user?.id) return;
 
         // Check if user can upload more videos
-        const limits = await canUploadMoreVideos(session.user.id)
+        const limits = await canUploadMoreVideos(session.user.id);
         if (!limits.canUpload) {
-            setErrorMessage(`You've reached your daily video limit (${limits.limit} per day). ${timeRemaining ? `Next upload available ${timeRemaining}.` : 'Please upgrade your plan for more videos per day.'}`)
-            return
+            setErrorMessage(`You've reached your daily video limit (${limits.limit} per day). ${timeRemaining ? `Next upload available ${timeRemaining}.` : 'Please upgrade your plan for more videos per day.'}`);
+            return;
         }
 
         try {
-            setProcessingState("uploading")
-            setProcessingProgress(10)
+            setProcessingState("uploading");
+            setProcessingProgress(10);
+            setErrorMessage(null);
 
-            let response
-
+            let formData;
             if (sourceType === "file") {
-                // For file uploads
-                const formData = new FormData()
-                formData.append("video", videoSource as File)
-                formData.append("sourceLanguage", sourceLanguage)
-                formData.append("targetLanguage", targetLanguage)
-
-                setProcessingProgress(20)
-                setProcessingState("processing")
-
-                response = await fetch(`${VIDEO_PROCESSING_API}`, {
-                    method: "POST",
-                    body: formData,
-                })
+                formData = new FormData();
+                formData.append("video", videoSource as File);
+                formData.append("sourceLanguage", sourceLanguage);
+                formData.append("targetLanguage", targetLanguage);
             } else {
-                throw new Error("Invalid video source")
+                throw new Error("Invalid video source");
             }
+
+            // Create a controller to abort the request if needed
+            const controller = new AbortController();
+            const signal = controller.signal;
+
+            // Set a timeout to abort the request after 10 minutes
+            const timeout = setTimeout(() => controller.abort(), 10 * 60 * 1000);
+
+            const response = await fetch(`${VIDEO_PROCESSING_API}`, {
+                method: "POST",
+                body: formData,
+                signal: signal
+            });
+
+            clearTimeout(timeout);
 
             if (!response.ok) {
-                const responseText = await response.text()
-                console.error("API error response:", responseText)
-                throw new Error(`API Error (${response.status}): ${responseText.substring(0, 100)}...`)
+                const responseText = await response.text();
+                console.error("API error response:", responseText);
+                throw new Error(`API Error (${response.status}): ${responseText.substring(0, 100)}...`);
             }
 
-            setProcessingProgress(80)
-            setProcessingState("downloading")
+            // Start reading the stream
+            const reader = response.body?.getReader();
+            if (!reader) {
+                throw new Error("Unable to read response stream");
+            }
 
-            const data = await response.json()
+            // Process the stream
+            const decoder = new TextDecoder();
+            let done = false;
+            let completeUpdate = null;
 
-            // Update state with processed data
-            setProcessedVideoUrl(data.videoUrl)
-            setSrtUrl(data.srtUrl)
-            setTranscription(data.transcription)
+            while (!done) {
+                const { value, done: doneReading } = await reader.read();
+                done = doneReading;
 
-            setProcessingProgress(100)
-            setProcessingState("completed")
+                if (value) {
+                    // Decode the chunk and split by newlines
+                    const chunk = decoder.decode(value, { stream: !done });
 
-            // Record that a video has been processed (regardless of saving to library)
-            await recordVideoProcessed(session.user.id)
+                    // Each update is a separate JSON object on a new line
+                    const updates = chunk.split('\n').filter(Boolean);
 
-            // Reload limits after processing is complete
-            await loadUserPlanLimits()
-        } catch (error: unknown) {
-            console.error("Processing error:", error)
+                    for (const updateText of updates) {
+                        try {
+                            const update = JSON.parse(updateText);
+                            console.log("Processing update:", update);
 
-            if (error instanceof Error && error.message.includes("YouTube")) {
-                setErrorMessage(
-                    "YouTube video processing is currently unavailable. Please download the video manually and upload it as a file instead.",
-                )
+                            // Handle progress updates
+                            if (update.progress) {
+                                setProcessingProgress(update.progress);
+                            }
+
+                            // Handle status updates
+                            if (update.status === 'uploading') {
+                                setProcessingState("uploading");
+                            } else if (update.status === 'processing' || update.status === 'starting' || update.status === 'finalizing') {
+                                setProcessingState("processing");
+                            } else if (update.status === 'downloading') {
+                                setProcessingState("downloading");
+                            } else if (update.status === 'complete') {
+                                setProcessingState("completed");
+                                completeUpdate = update; // Save the final update with all the URLs
+                            } else if (update.status === 'error') {
+                                throw new Error(update.error || "Processing failed");
+                            }
+
+                            // Display any messages from the server
+                            if (update.message) {
+                                console.log("Server message:", update.message);
+                            }
+                        } catch (e) {
+                            console.warn("Error parsing update:", e, "Raw data:", updateText);
+                        }
+                    }
+                }
+            }
+
+            // Process the final complete update
+            if (completeUpdate) {
+                setProcessedVideoUrl(completeUpdate.videoUrl);
+                setSrtUrl(completeUpdate.srtUrl);
+                setTranscription(completeUpdate.transcription);
+                setProcessingProgress(100);
+                setProcessingState("completed");
+
+                // Record that a video has been processed
+                await recordVideoProcessed(session.user.id);
+
+                // Reload limits after processing is complete
+                await loadUserPlanLimits();
             } else {
-                setErrorMessage(error instanceof Error ? error.message : "An unknown error occurred")
+                // If we didn't get a complete update but the stream finished
+                throw new Error("Processing completed but no final result was received");
             }
-            setProcessingState("error")
-        }
-    }
+        } catch (error: unknown) {
+            console.error("Processing error:", error);
 
+            if (error instanceof Error) {
+                if (error.name === 'AbortError') {
+                    setErrorMessage("Processing timed out. Please try again with a smaller video.");
+                } else if (error.message.includes("YouTube")) {
+                    setErrorMessage(
+                        "YouTube video processing is currently unavailable. Please download the video manually and upload it as a file instead."
+                    );
+                } else {
+                    setErrorMessage(error.message);
+                }
+            } else {
+                setErrorMessage("An unknown error occurred");
+            }
+
+            setProcessingState("error");
+        }
+    };
     // Function to save the processed video to Supabase
     const saveVideoToLibrary = async () => {
         if (!processedVideoUrl || !session?.user?.id) return
