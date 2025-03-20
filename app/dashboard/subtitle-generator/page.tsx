@@ -214,20 +214,23 @@ export default function SubtitleGenerator() {
                 throw new Error("Invalid video source");
             }
 
-            // Create a controller to abort the request if needed
-            const controller = new AbortController();
-            const signal = controller.signal;
+            setProcessingProgress(20);
+            setProcessingState("processing");
 
-            // Set a timeout to abort the request after 10 minutes
-            const timeout = setTimeout(() => controller.abort(), 10 * 60 * 1000);
+            // Simulate progress for better UX
+            const progressInterval = setInterval(() => {
+                setProcessingProgress(prev => {
+                    if (prev < 90) return prev + 1;
+                    return prev;
+                });
+            }, 2000);
 
             const response = await fetch(`${VIDEO_PROCESSING_API}`, {
                 method: "POST",
-                body: formData,
-                signal: signal
+                body: formData
             });
 
-            clearTimeout(timeout);
+            clearInterval(progressInterval);
 
             if (!response.ok) {
                 const responseText = await response.text();
@@ -235,80 +238,22 @@ export default function SubtitleGenerator() {
                 throw new Error(`API Error (${response.status}): ${responseText.substring(0, 100)}...`);
             }
 
-            // Start reading the stream
-            const reader = response.body?.getReader();
-            if (!reader) {
-                throw new Error("Unable to read response stream");
+            const data = await response.json();
+
+            if (!data.videoUrl) {
+                throw new Error("Processing completed but no video URL was received");
             }
 
-            // Process the stream
-            const decoder = new TextDecoder();
-            let done = false;
-            let completeUpdate = null;
+            // Update state with processed data
+            setProcessedVideoUrl(data.videoUrl);
+            setSrtUrl(data.srtUrl);
+            setTranscription(data.transcription);
+            setProcessingProgress(100);
+            setProcessingState("completed");
 
-            while (!done) {
-                const { value, done: doneReading } = await reader.read();
-                done = doneReading;
-
-                if (value) {
-                    // Decode the chunk and split by newlines
-                    const chunk = decoder.decode(value, { stream: !done });
-
-                    // Each update is a separate JSON object on a new line
-                    const updates = chunk.split('\n').filter(Boolean);
-
-                    for (const updateText of updates) {
-                        try {
-                            const update = JSON.parse(updateText);
-                            console.log("Processing update:", update);
-
-                            // Handle progress updates
-                            if (update.progress) {
-                                setProcessingProgress(update.progress);
-                            }
-
-                            // Handle status updates
-                            if (update.status === 'uploading') {
-                                setProcessingState("uploading");
-                            } else if (update.status === 'processing' || update.status === 'starting' || update.status === 'finalizing') {
-                                setProcessingState("processing");
-                            } else if (update.status === 'downloading') {
-                                setProcessingState("downloading");
-                            } else if (update.status === 'complete') {
-                                setProcessingState("completed");
-                                completeUpdate = update; // Save the final update with all the URLs
-                            } else if (update.status === 'error') {
-                                throw new Error(update.error || "Processing failed");
-                            }
-
-                            // Display any messages from the server
-                            if (update.message) {
-                                console.log("Server message:", update.message);
-                            }
-                        } catch (e) {
-                            console.warn("Error parsing update:", e, "Raw data:", updateText);
-                        }
-                    }
-                }
-            }
-
-            // Process the final complete update
-            if (completeUpdate) {
-                setProcessedVideoUrl(completeUpdate.videoUrl);
-                setSrtUrl(completeUpdate.srtUrl);
-                setTranscription(completeUpdate.transcription);
-                setProcessingProgress(100);
-                setProcessingState("completed");
-
-                // Record that a video has been processed
-                await recordVideoProcessed(session.user.id);
-
-                // Reload limits after processing is complete
-                await loadUserPlanLimits();
-            } else {
-                // If we didn't get a complete update but the stream finished
-                throw new Error("Processing completed but no final result was received");
-            }
+            // Record that a video has been processed
+            await recordVideoProcessed(session.user.id);
+            await loadUserPlanLimits();
         } catch (error: unknown) {
             console.error("Processing error:", error);
 

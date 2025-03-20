@@ -1,3 +1,4 @@
+// app/api/proxy-video/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 
 export const config = {
@@ -15,67 +16,32 @@ export async function POST(request: NextRequest): Promise<Response> {
             );
         }
 
-        // Create a ReadableStream to stream the backend response
-        const { readable, writable } = new TransformStream();
+        // Extract the FormData from the request
+        const formData = await request.formData();
 
-        // Clone the request to forward it
-        const clonedRequest = request.clone();
-
-        // Get the content type
-        const contentType = request.headers.get('content-type');
-
-        // Start the fetch to the backend
-        fetch(`${backendUrl}/api/process-video`, {
+        // Create a new request to the backend
+        const response = await fetch(`${backendUrl}/api/process-video`, {
             method: 'POST',
-            body: clonedRequest.body,
-            headers: {
-                ...(contentType ? {'Content-Type': contentType} : {})
-            },
-            // Using the correct approach - omit the duplex property entirely
-        }).then(async response => {
-            if (!response.body) {
-                writable.getWriter().close();
-                return;
-            }
+            body: formData,
+            // No need for duplex property, just forward the request
+        });
 
-            // Stream each chunk from backend to client
-            const reader = response.body.getReader();
-            const writer = writable.getWriter();
+        // Read the response from the backend
+        const responseText = await response.text();
 
-            async function pump(): Promise<void> {
-                try {
-                    while (true) {
-                        const { done, value } = await reader.read();
-
-                        if (done) {
-                            await writer.close();
-                            break;
-                        }
-
-                        await writer.write(value);
-                    }
-                } catch (e) {
-                    console.error("Error in pump:", e);
-                    await writer.close();
+        // Try to parse the response as JSON
+        try {
+            const jsonResponse = JSON.parse(responseText);
+            return NextResponse.json(jsonResponse);
+        } catch {
+            // If it's not valid JSON, return the raw text
+            return new Response(responseText, {
+                status: response.status,
+                headers: {
+                    'Content-Type': 'text/plain',
                 }
-            }
-
-            // Start pumping data
-            pump().catch(err => {
-                console.error("Error in pump promise:", err);
             });
-        }).catch(err => {
-            console.error("Error streaming response:", err);
-            // Close the writer in case of error
-            writable.getWriter().close();
-        });
-
-        // Return a streaming response
-        return new Response(readable, {
-            headers: {
-                'Content-Type': 'application/json',
-            }
-        });
+        }
     } catch (error: unknown) {
         console.error('Proxy error:', error);
         return NextResponse.json(

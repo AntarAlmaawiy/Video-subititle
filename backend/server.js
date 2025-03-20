@@ -181,6 +181,7 @@ app.post('/api/process-youtube', async (req, res) => {
 });
 
 // API endpoint to process an uploaded video - updated with streaming response
+// In your server.js file, modify the process-video endpoint:
 app.post('/api/process-video', upload.single('video'), async (req, res) => {
     let videoPath = '';
     let audioPath = '';
@@ -191,38 +192,16 @@ app.post('/api/process-video', upload.single('video'), async (req, res) => {
     req.setTimeout(600000); // 10 minutes
     res.setTimeout(600000); // 10 minutes
 
-    // Set headers for streaming response
-    res.writeHead(200, {
-        'Content-Type': 'application/json',
-        'Transfer-Encoding': 'chunked',
-        'Connection': 'keep-alive',
-        'Cache-Control': 'no-cache',
-        'X-Accel-Buffering': 'no' // Disable Nginx buffering
-    });
-
-    // Send initial progress update
-    sendProgressUpdate(res, {
-        status: 'starting',
-        message: 'Received upload request',
-        progress: 5
-    });
-
     try {
         console.log('Received request to process uploaded video');
         const videoFile = req.file;
         const { sourceLanguage = 'auto', targetLanguage = 'en' } = req.body;
 
         if (!videoFile) {
-            sendErrorAndEnd(res, 'No video file provided');
-            return;
+            return res.status(400).json({ error: 'No video file provided' });
         }
 
         console.log('Processing file:', videoFile.originalname, 'Size:', (videoFile.size / (1024 * 1024)).toFixed(2), 'MB');
-        sendProgressUpdate(res, {
-            status: 'uploading',
-            message: 'Video file received, beginning processing',
-            progress: 10
-        });
 
         const videoId = path.basename(videoFile.path, path.extname(videoFile.path));
         videoPath = videoFile.path;
@@ -230,435 +209,142 @@ app.post('/api/process-video', upload.single('video'), async (req, res) => {
         srtPath = path.join(tempDir, `${videoId}.srt`);
         outputPath = path.join(tempDir, `${videoId}-with-subtitles.mp4`);
 
-        // Step 2: Extract audio from the video with optimized settings
-        console.log('Extracting audio with optimized settings for transcription...');
-        sendProgressUpdate(res, {
-            status: 'processing',
-            message: 'Extracting audio from video',
-            progress: 20
+        // Step 2: Extract audio from the video
+        console.log('Extracting audio...');
+        await new Promise((resolve, reject) => {
+            ffmpeg(videoPath)
+                .output(audioPath)
+                .audioChannels(1)
+                .audioFrequency(16000)
+                .audioCodec('libmp3lame')
+                .audioBitrate('128k')
+                .toFormat('mp3')
+                .on('end', resolve)
+                .on('error', reject)
+                .run();
         });
 
-        try {
-            await new Promise((resolve, reject) => {
-                ffmpeg(videoPath)
-                    .output(audioPath)
-                    .audioChannels(1) // Mono audio works better with Whisper
-                    .audioFrequency(16000) // 16kHz is recommended for Whisper
-                    .audioCodec('libmp3lame')
-                    .audioBitrate('128k') // Higher bitrate for better quality
-                    .toFormat('mp3')
-                    .on('start', (commandLine) => {
-                        console.log('FFmpeg command:', commandLine);
-                    })
-                    .on('progress', (progress) => {
-                        console.log(`Audio extraction progress: ${progress.percent ? progress.percent.toFixed(1) : 'N/A'}%`);
-                        // Send progress update to client
-                        if (progress.percent) {
-                            const overallProgress = 20 + (progress.percent * 0.1); // Map to 20-30% range
-                            sendProgressUpdate(res, {
-                                status: 'processing',
-                                message: 'Extracting audio from video',
-                                progress: Math.min(30, Math.floor(overallProgress))
-                            });
-                        }
-                    })
-                    .on('end', () => {
-                        console.log('Audio extraction completed');
-                        sendProgressUpdate(res, {
-                            status: 'processing',
-                            message: 'Audio extraction completed',
-                            progress: 30
-                        });
-                        resolve();
-                    })
-                    .on('error', (err) => {
-                        console.error('Audio extraction error:', err);
-                        reject(new Error(`Failed to extract audio: ${err.message}`));
-                    })
-                    .run();
-            });
-        } catch (error) {
-            throw new Error(`Audio extraction failed: ${error.message}`);
-        }
-
-        // Step 3: Transcribe the audio using Whisper API with better settings for accuracy
-        console.log('Transcribing audio with Whisper API...');
-        sendProgressUpdate(res, {
-            status: 'processing',
-            message: 'Transcribing audio using AI',
-            progress: 35
+        // Step 3: Transcribe the audio
+        console.log('Transcribing audio...');
+        const audioFile = fs.createReadStream(audioPath);
+        const transcriptionResponse = await openai.audio.transcriptions.create({
+            file: audioFile,
+            model: 'whisper-1',
+            language: sourceLanguage !== 'auto' ? sourceLanguage : undefined,
+            response_format: 'verbose_json',
+            timestamp_granularities: ["segment"]
         });
 
-        let transcriptionResponse;
-        let retryCount = 0;
-        const maxRetries = 3;
-
-        while (retryCount < maxRetries) {
-            try {
-                // Ensure the audio file exists and is valid
-                if (!fs.existsSync(audioPath)) {
-                    throw new Error('Audio file does not exist');
-                }
-
-                const stats = fs.statSync(audioPath);
-                if (stats.size === 0) {
-                    throw new Error('Audio file is empty');
-                }
-
-                console.log(`Audio file size: ${(stats.size / 1024 / 1024).toFixed(2)} MB`);
-
-                // Create a file object for the OpenAI API
-                const audioFile = fs.createReadStream(audioPath);
-
-                // Make the API call with proper configuration
-                transcriptionResponse = await openai.audio.transcriptions.create({
-                    file: audioFile,
-                    model: 'whisper-1',
-                    language: sourceLanguage !== 'auto' ? sourceLanguage : undefined,
-                    response_format: 'verbose_json',
-                    timestamp_granularities: ["segment"],  // Get precise timestamps for subtitles
-                    temperature: 0.0  // Use lowest temperature for most accurate transcription
-                });
-
-                console.log('Transcription completed successfully');
-                sendProgressUpdate(res, {
-                    status: 'processing',
-                    message: 'Transcription completed',
-                    progress: 45
-                });
-                break; // Success, exit the loop
-            } catch (err) {
-                retryCount++;
-                console.error(`Transcription attempt ${retryCount} failed:`, err);
-                sendProgressUpdate(res, {
-                    status: 'processing',
-                    message: `Transcription attempt ${retryCount} failed, retrying...`,
-                    progress: 35 + (retryCount * 2)
-                });
-
-                if (retryCount >= maxRetries) {
-                    throw new Error(`Failed to transcribe after ${maxRetries} attempts: ${err.message}`);
-                }
-
-                // Wait before retrying, increasing the wait time for each retry
-                const waitTime = 3000 * retryCount;
-                console.log(`Waiting ${waitTime/1000} seconds before retry ${retryCount + 1}...`);
-                await new Promise(resolve => setTimeout(resolve, waitTime));
-            }
-        }
-
-        // Step 4: Translate if needed
-        console.log('Processing transcription results...');
-        if (!transcriptionResponse || !transcriptionResponse.text) {
-            throw new Error('Transcription returned empty results');
-        }
-
-        // Check if we received segments for accurate timing
-        const hasSegments = transcriptionResponse.segments && transcriptionResponse.segments.length > 0;
-        console.log(`Received ${hasSegments ? transcriptionResponse.segments.length : 0} segments with timing information`);
-
+        // Step 4: Translation if needed
+        console.log('Processing transcription...');
         let finalText = transcriptionResponse.text;
-        let translatedSegments = [];
-        console.log('Transcription sample:', finalText.substring(0, 100) + '...');
+        let translatedSegments = transcriptionResponse.segments || [];
 
         if (sourceLanguage !== targetLanguage && targetLanguage !== 'auto') {
-            sendProgressUpdate(res, {
-                status: 'processing',
-                message: `Translating content to ${targetLanguage}`,
-                progress: 50
-            });
+            console.log(`Translating from ${sourceLanguage} to ${targetLanguage}...`);
 
-            if (hasSegments) {
-                // Translate each segment individually to preserve timing
-                console.log(`Translating ${transcriptionResponse.segments.length} segments from ${sourceLanguage} to ${targetLanguage}...`);
+            if (translatedSegments.length > 0) {
+                // Translate each segment
+                const newSegments = [];
+                for (const segment of translatedSegments) {
+                    const translationResponse = await openai.chat.completions.create({
+                        model: 'gpt-3.5-turbo',
+                        messages: [
+                            { role: 'system', content: `Translate from ${sourceLanguage} to ${targetLanguage}.` },
+                            { role: 'user', content: segment.text }
+                        ]
+                    });
 
-                for (let i = 0; i < transcriptionResponse.segments.length; i++) {
-                    const segment = transcriptionResponse.segments[i];
-                    try {
-                        const translationResponse = await openai.chat.completions.create({
-                            model: 'gpt-3.5-turbo',
-                            messages: [
-                                {
-                                    role: 'system',
-                                    content: `You are a professional translator. Translate the provided text from ${sourceLanguage} to ${targetLanguage}. Maintain the original meaning and tone. Return only the translated text without additional explanations.`
-                                },
-                                {
-                                    role: 'user',
-                                    content: segment.text
-                                }
-                            ],
-                            temperature: 0.2
-                        });
-
-                        const translatedText = translationResponse.choices[0]?.message?.content || segment.text;
-                        translatedSegments.push({
-                            ...segment,
-                            text: translatedText
-                        });
-
-                        console.log(`Translated segment ${i+1}/${transcriptionResponse.segments.length}`);
-                        // Update progress based on translation progress (50-60% range)
-                        const segmentProgress = 50 + (10 * ((i + 1) / transcriptionResponse.segments.length));
-                        sendProgressUpdate(res, {
-                            status: 'processing',
-                            message: `Translating segments (${i+1}/${transcriptionResponse.segments.length})`,
-                            progress: Math.min(60, Math.floor(segmentProgress))
-                        });
-                    } catch (err) {
-                        console.error(`Error translating segment ${i+1}:`, err);
-                        // On error, keep the original text
-                        translatedSegments.push(segment);
-                    }
+                    newSegments.push({
+                        ...segment,
+                        text: translationResponse.choices[0]?.message?.content || segment.text
+                    });
                 }
-
-                // Also translate the full text for the final transcription
-                sendProgressUpdate(res, {
-                    status: 'processing',
-                    message: 'Finalizing translation',
-                    progress: 62
-                });
-
-                const fullTranslationResponse = await openai.chat.completions.create({
-                    model: 'gpt-3.5-turbo',
-                    messages: [
-                        {
-                            role: 'system',
-                            content: `You are a professional translator. Translate the provided text from ${sourceLanguage} to ${targetLanguage}. Maintain the original meaning, tone, and formatting. Return only the translated text without additional explanations.`
-                        },
-                        {
-                            role: 'user',
-                            content: finalText
-                        }
-                    ],
-                    temperature: 0.2
-                });
-
-                finalText = fullTranslationResponse.choices[0]?.message?.content || finalText;
-                console.log('Full translation completed successfully');
-                sendProgressUpdate(res, {
-                    status: 'processing',
-                    message: 'Translation completed',
-                    progress: 65
-                });
-            } else {
-                // Fallback to translating the entire text if no segments available
-                console.log(`Translating full text from ${sourceLanguage} to ${targetLanguage}...`);
-
-                const translationResponse = await openai.chat.completions.create({
-                    model: 'gpt-3.5-turbo',
-                    messages: [
-                        {
-                            role: 'system',
-                            content: `You are a professional translator. Translate the provided text from ${sourceLanguage} to ${targetLanguage}. Maintain the original meaning, tone, and formatting. Return only the translated text without additional explanations.`
-                        },
-                        {
-                            role: 'user',
-                            content: finalText
-                        }
-                    ],
-                    temperature: 0.2
-                });
-
-                finalText = translationResponse.choices[0]?.message?.content || finalText;
-                console.log('Translation completed successfully');
-                sendProgressUpdate(res, {
-                    status: 'processing',
-                    message: 'Translation completed',
-                    progress: 65
-                });
+                translatedSegments = newSegments;
             }
-        } else {
-            // If no translation needed, just copy the segments
-            translatedSegments = transcriptionResponse.segments || [];
-            sendProgressUpdate(res, {
-                status: 'processing',
-                message: 'Using original language, skipping translation',
-                progress: 65
+
+            // Also translate the full text
+            const fullTranslation = await openai.chat.completions.create({
+                model: 'gpt-3.5-turbo',
+                messages: [
+                    { role: 'system', content: `Translate from ${sourceLanguage} to ${targetLanguage}.` },
+                    { role: 'user', content: finalText }
+                ]
             });
+
+            finalText = fullTranslation.choices[0]?.message?.content || finalText;
         }
 
-        // Step 5: Create SRT file with proper timing
+        // Step 5: Create SRT file
         console.log('Creating SRT file...');
-        sendProgressUpdate(res, {
-            status: 'processing',
-            message: 'Creating subtitle file',
-            progress: 70
+        let srtContent = '';
+        translatedSegments.forEach((segment, index) => {
+            const startTime = formatSRTTime(segment.start);
+            const endTime = formatSRTTime(segment.end);
+            srtContent += `${index + 1}\n${startTime} --> ${endTime}\n${segment.text.trim()}\n\n`;
+        });
+        fs.writeFileSync(srtPath, srtContent);
+
+        // Step 6: Embed subtitles
+        console.log('Embedding subtitles...');
+        const escapedSrtPath = srtPath.replace(/\\/g, '\\\\').replace(/:/g, '\\:');
+        await new Promise((resolve, reject) => {
+            ffmpeg(videoPath)
+                .outputOptions([
+                    '-c:v libx264',
+                    '-c:a aac',
+                    `-vf`, `subtitles=${escapedSrtPath}:force_style='FontName=Arial,FontSize=14,PrimaryColour=&HFFFFFF,OutlineColour=&H000000,BackColour=&H00000000,BorderStyle=3,Outline=1.2,Shadow=0.8,MarginV=25,Alignment=2'`,
+                    '-crf 23',
+                    '-preset fast'
+                ])
+                .output(outputPath)
+                .on('end', resolve)
+                .on('error', reject)
+                .run();
         });
 
-        try {
-            const segments = translatedSegments.length > 0 ? translatedSegments : transcriptionResponse.segments || [];
-            let srtContent = '';
-
-            segments.forEach((segment, index) => {
-                const startTime = formatSRTTime(segment.start);
-                const endTime = formatSRTTime(segment.end);
-
-                srtContent += `${index + 1}\n`;
-                srtContent += `${startTime} --> ${endTime}\n`;
-                srtContent += `${segment.text.trim()}\n\n`;
-            });
-
-            fs.writeFileSync(srtPath, srtContent);
-            console.log('SRT file created successfully');
-        } catch (error) {
-            throw new Error(`Failed to create SRT file: ${error.message}`);
-        }
-
-        // Step 6: Embed subtitles into video with refined styling
-        console.log('Embedding refined subtitles...');
-        sendProgressUpdate(res, {
-            status: 'processing',
-            message: 'Embedding subtitles into video',
-            progress: 75
-        });
-
-        try {
-            // Escape the path for use in the subtitles filter
-            const escapedSrtPath = srtPath.replace(/\\/g, '\\\\').replace(/:/g, '\\:');
-
-            await new Promise((resolve, reject) => {
-                ffmpeg(videoPath)
-                    .outputOptions([
-                        '-c:v libx264',       // Video codec
-                        '-c:a aac',           // Audio codec
-                        // Use the subtitles filter with refined styling - smaller text, no background
-                        '-vf', `subtitles=${escapedSrtPath}:force_style='FontName=Arial,FontSize=14,PrimaryColour=&HFFFFFF,OutlineColour=&H000000,BackColour=&H00000000,BorderStyle=3,Outline=1.2,Shadow=0.8,MarginV=25,Alignment=2'`,
-                        '-crf 23',            // Quality
-                        '-preset fast'        // Speed vs compression
-                    ])
-                    .output(outputPath)
-                    .on('start', (commandLine) => {
-                        console.log('FFmpeg subtitle command:', commandLine);
-                    })
-                    .on('progress', (progress) => {
-                        console.log(`Subtitle embedding progress: ${progress.percent ? progress.percent.toFixed(1) : 'N/A'}%`);
-                        // Update progress (75-95% range)
-                        if (progress.percent) {
-                            const overallProgress = 75 + (progress.percent * 0.2);
-                            sendProgressUpdate(res, {
-                                status: 'processing',
-                                message: 'Embedding subtitles into video',
-                                progress: Math.min(95, Math.floor(overallProgress))
-                            });
-                        }
-                    })
-                    .on('end', () => {
-                        console.log('Subtitle embedding completed');
-                        sendProgressUpdate(res, {
-                            status: 'finalizing',
-                            message: 'Video processing completed',
-                            progress: 95
-                        });
-                        resolve();
-                    })
-                    .on('error', (err) => {
-                        console.error('Subtitle embedding error:', err);
-                        reject(new Error(`Failed to embed subtitles: ${err.message}`));
-                    })
-                    .run();
-            });
-        } catch (error) {
-            throw new Error(`Subtitle embedding failed: ${error.message}`);
-        }
-
-        // Step 7: Return URLs for processed files (these are temporary!)
+        // Step 7: Return URLs
         const serverBaseUrl = process.env.SERVER_BASE_URL || `http://localhost:${port}`;
         const processedVideoUrl = `${serverBaseUrl}/temp/${path.basename(outputPath)}`;
         const srtUrl = `${serverBaseUrl}/temp/${path.basename(srtPath)}`;
 
-        console.log('Processing complete. Returning URLs:', {
-            videoUrl: processedVideoUrl,
-            srtUrl: srtUrl
-        });
+        console.log('Processing complete. Returning URLs');
 
-        // Schedule cleanup for these files
-        // We'll keep them for A hours to allow download, then clean them up
+        // Schedule cleanup
         const filesToCleanup = [videoPath, audioPath, srtPath, outputPath];
-        scheduleFileCleanup(filesToCleanup, 4 * 60 * 60 * 1000); // 4 hours
+        scheduleFileCleanup(filesToCleanup, 4 * 60 * 60 * 1000);
 
-        // Send final response
-        sendProgressUpdate(res, {
-            status: 'complete',
-            message: 'Video processing complete',
-            progress: 100,
+        // Return a standard JSON response
+        res.json({
+            success: true,
             videoUrl: processedVideoUrl,
             srtUrl: srtUrl,
             transcription: finalText,
             temporary: true,
             expiresIn: '4 hours'
         });
-
-        // End the response
-        res.end();
-
     } catch (error) {
-        console.error('Error processing uploaded video:', error);
+        console.error('Error processing video:', error);
 
-        // Provide clear error messages based on the type of error
-        let errorMessage = 'Unknown server error';
-
-        if (error.message.includes('transcribe')) {
-            errorMessage = 'Error transcribing audio. Please try with a smaller or clearer video.';
-        } else if (error.message.includes('translate')) {
-            errorMessage = 'Error translating content. Please try a different language pair.';
-        } else if (error.message.includes('ffmpeg')) {
-            errorMessage = 'Error processing video. Please try a different format or codec.';
-        } else if (error.message.includes('extract audio')) {
-            errorMessage = 'Error extracting audio from video. Please try a different video file.';
-        } else if (error.message.includes('embed subtitles')) {
-            errorMessage = 'Error embedding subtitles. Please try a different video format.';
-        } else if (error.message.includes('Connection')) {
-            errorMessage = 'Connection error with AI service. Please try again in a few minutes.';
-        } else if (error.message.includes('empty results')) {
-            errorMessage = 'Transcription returned empty results. Please try a video with clearer audio.';
-        } else {
-            errorMessage = `Server error: ${error.message}`;
+        let errorMessage = 'Error processing video.';
+        if (error instanceof Error) {
+            errorMessage = error.message;
         }
 
-        // Send error response
-        sendErrorAndEnd(res, errorMessage);
+        res.status(500).json({ error: errorMessage });
 
-        // Clean up any files that were created
-        try {
-            [videoPath, audioPath, srtPath, outputPath].forEach(file => {
-                if (file && fs.existsSync(file)) {
+        // Clean up files
+        [videoPath, audioPath, srtPath, outputPath].forEach(file => {
+            if (file && fs.existsSync(file)) {
+                try {
                     fs.unlinkSync(file);
-                    console.log(`Cleaned up file after error: ${file}`);
+                } catch (e) {
+                    console.error(`Error cleaning up file ${file}:`, e);
                 }
-            });
-        } catch (cleanupError) {
-            console.error('Error cleaning up files after processing error:', cleanupError);
-        }
+            }
+        });
     }
 });
-
-// Helper function to send progress updates
-function sendProgressUpdate(res, data) {
-    try {
-        res.write(JSON.stringify(data) + '\n');
-    } catch (err) {
-        console.error('Error sending progress update:', err);
-    }
-}
-
-// Helper function to send error and end response
-function sendErrorAndEnd(res, errorMessage) {
-    try {
-        res.write(JSON.stringify({
-            status: 'error',
-            error: errorMessage
-        }) + '\n');
-        res.end();
-    } catch (err) {
-        console.error('Error sending error response:', err);
-        // Try to end the response anyway
-        try {
-            res.end();
-        } catch (endErr) {
-            console.error('Error ending response after error:', endErr);
-        }
-    }
-}
 
 // Helper function to format time for SRT (00:00:00,000)
 function formatSRTTime(seconds) {
