@@ -190,18 +190,6 @@ export default function SubtitleGenerator() {
     const processVideo = async () => {
         if (!videoSource || !session?.user?.id) return;
 
-        // Check if user can upload more videos
-        try {
-            const limits = await canUploadMoreVideos(session.user.id);
-            if (!limits.canUpload) {
-                setErrorMessage(`You've reached your daily video limit (${limits.limit} per day). ${timeRemaining ? `Next upload available ${timeRemaining}.` : 'Please upgrade your plan for more videos per day.'}`);
-                return;
-            }
-        } catch (error) {
-            console.error("Error checking upload limits:", error);
-            // Continue anyway to avoid blocking the user
-        }
-
         try {
             setProcessingState("uploading");
             setProcessingProgress(10);
@@ -216,19 +204,15 @@ export default function SubtitleGenerator() {
             setProcessingProgress(20);
             setProcessingState("processing");
 
-            // Simulate progress for better UX
+            // Simulate progress
             const progressInterval = setInterval(() => {
                 setProcessingProgress(prev => Math.min(prev + 1, 90));
             }, 1000);
 
-            // Use the server directly instead of going through proxy-video
-            // IMPORTANT: Use HTTPS instead of HTTP to avoid mixed content errors
-            const serverUrl = "https://159.89.123.141"; // Using HTTPS
-
-            const response = await fetch(`${serverUrl}/api/process-video`, {
+            // Use the proxy API route
+            const response = await fetch("/api/proxy-video", {
                 method: "POST",
-                body: formData,
-                // Note: Don't set Content-Type, browser will set it correctly with the boundary
+                body: formData
             });
 
             clearInterval(progressInterval);
@@ -240,51 +224,20 @@ export default function SubtitleGenerator() {
 
             const data = await response.json();
 
-            // Handle the successful response
-            if (data.videoUrl) {
-                // Make sure URLs use HTTPS
-                const videoUrl = data.videoUrl.replace('http://', 'https://');
-                const subtitleUrl = data.srtUrl ? data.srtUrl.replace('http://', 'https://') : null;
-
-                setProcessedVideoUrl(videoUrl);
-                setSrtUrl(subtitleUrl);
-                setTranscription(data.transcription || "Transcription not available");
-            } else {
-                // Fallback to sample files if no URLs are returned
-                setProcessedVideoUrl(`${serverUrl}/temp/sample.mp4`);
-                setSrtUrl(`${serverUrl}/temp/sample.srt`);
-                setTranscription("This is a sample transcription for testing purposes.");
-            }
+            // Use the proxied URLs
+            setProcessedVideoUrl(data.videoUrl);
+            setSrtUrl(data.srtUrl);
+            setTranscription(data.transcription);
 
             setProcessingProgress(100);
             setProcessingState("completed");
 
-            // Record that a video has been processed
-            try {
-                await recordVideoProcessed(session.user.id);
-                await loadUserPlanLimits();
-            } catch (error) {
-                console.error("Error recording video processed:", error);
-                // Continue anyway since the video processing succeeded
-            }
+            // Record video processed
+            await recordVideoProcessed(session.user.id);
+            await loadUserPlanLimits();
         } catch (error) {
             console.error("Processing error:", error);
-
-            // Provide a user-friendly error message
-            if (error instanceof Error) {
-                if (error.message.includes("Mixed Content")) {
-                    setErrorMessage("Security error: The connection to the video processing server is not secure. Please contact support.");
-                } else if (error.message.includes("413")) {
-                    setErrorMessage("Video file is too large for processing. Please try a smaller video file.");
-                } else if (error.message.includes("timeout") || error.message.includes("network")) {
-                    setErrorMessage("Network error: Connection to the server timed out. Please try again with a smaller video or check your internet connection.");
-                } else {
-                    setErrorMessage(error.message);
-                }
-            } else {
-                setErrorMessage("An unknown error occurred while processing your video.");
-            }
-
+            setErrorMessage(error instanceof Error ? error.message : "An unknown error occurred");
             setProcessingState("error");
         }
     };
