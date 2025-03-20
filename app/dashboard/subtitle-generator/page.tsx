@@ -187,14 +187,20 @@ export default function SubtitleGenerator() {
             setOriginalVideoUrl(null);
         }
     }
+    // In your subtitle-generator/page.tsx file
     const processVideo = async () => {
         if (!videoSource || !session?.user?.id) return;
 
         // Check if user can upload more videos
-        const limits = await canUploadMoreVideos(session.user.id);
-        if (!limits.canUpload) {
-            setErrorMessage(`You've reached your daily video limit (${limits.limit} per day). ${timeRemaining ? `Next upload available ${timeRemaining}.` : 'Please upgrade your plan for more videos per day.'}`);
-            return;
+        try {
+            const limits = await canUploadMoreVideos(session.user.id);
+            if (!limits.canUpload) {
+                setErrorMessage(`You've reached your daily video limit (${limits.limit} per day).`);
+                return;
+            }
+        } catch (error) {
+            console.error("Error checking upload limits:", error);
+            // Continue anyway to avoid blocking the user
         }
 
         try {
@@ -202,43 +208,38 @@ export default function SubtitleGenerator() {
             setProcessingProgress(10);
             setErrorMessage(null);
 
-            // Important: Use the direct backend URL instead of the proxy
-            const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://159.89.123.141:3001";
-
-            let formData;
-            if (sourceType === "file") {
-                formData = new FormData();
-                formData.append("video", videoSource as File);
-                formData.append("sourceLanguage", sourceLanguage);
-                formData.append("targetLanguage", targetLanguage);
-            } else {
-                throw new Error("Invalid video source");
+            // Check file size
+            if (sourceType === "file" && (videoSource as File).size > 4 * 1024 * 1024) {
+                // For files larger than 4MB
+                setErrorMessage("File too large. Please try with a smaller video file (under 4MB).");
+                setProcessingState("error");
+                return;
             }
+
+            const formData = new FormData();
+            formData.append("video", videoSource as File);
+            formData.append("sourceLanguage", sourceLanguage);
+            formData.append("targetLanguage", targetLanguage);
 
             setProcessingProgress(20);
             setProcessingState("processing");
 
-            // Simulate progress for better UX
+            // Simple progress simulation
             const progressInterval = setInterval(() => {
-                setProcessingProgress(prev => {
-                    if (prev < 90) return prev + 1;
-                    return prev;
-                });
-            }, 2000);
+                setProcessingProgress(prev => Math.min(prev + 1, 90));
+            }, 1000);
 
-            // Upload directly to your backend server instead of using the proxy
-            const response = await fetch(`${BACKEND_URL}/api/process-video`, {
+            // Try direct upload through proxy
+            const response = await fetch("/api/proxy-video", {
                 method: "POST",
-                body: formData,
-                // Note: No need to set Content-Type, the browser will set it with the correct boundary for FormData
+                body: formData
             });
 
             clearInterval(progressInterval);
 
             if (!response.ok) {
-                const responseText = await response.text();
-                console.error("API error response:", responseText);
-                throw new Error(`API Error (${response.status}): ${responseText.substring(0, 100)}...`);
+                const errorText = await response.text();
+                throw new Error(`API Error (${response.status}): ${errorText}`);
             }
 
             const data = await response.json();
@@ -249,31 +250,22 @@ export default function SubtitleGenerator() {
 
             // Update state with processed data
             setProcessedVideoUrl(data.videoUrl);
-            setSrtUrl(data.srtUrl);
-            setTranscription(data.transcription);
+            setSrtUrl(data.srtUrl || null);
+            setTranscription(data.transcription || null);
             setProcessingProgress(100);
             setProcessingState("completed");
 
             // Record that a video has been processed
-            await recordVideoProcessed(session.user.id);
-            await loadUserPlanLimits();
-        } catch (error: unknown) {
-            console.error("Processing error:", error);
-
-            if (error instanceof Error) {
-                if (error.name === 'AbortError') {
-                    setErrorMessage("Processing timed out. Please try again with a smaller video.");
-                } else if (error.message.includes("YouTube")) {
-                    setErrorMessage(
-                        "YouTube video processing is currently unavailable. Please download the video manually and upload it as a file instead."
-                    );
-                } else {
-                    setErrorMessage(error.message);
-                }
-            } else {
-                setErrorMessage("An unknown error occurred");
+            try {
+                await recordVideoProcessed(session.user.id);
+                await loadUserPlanLimits();
+            } catch (error) {
+                console.error("Error recording video processed:", error);
+                // Continue anyway since the video processing itself succeeded
             }
-
+        } catch (error) {
+            console.error("Processing error:", error);
+            setErrorMessage(error instanceof Error ? error.message : "An unknown error occurred");
             setProcessingState("error");
         }
     };

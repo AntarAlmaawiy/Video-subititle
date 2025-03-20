@@ -86,19 +86,15 @@ const upload = multer({
     limits: { fileSize: 500 * 1024 * 1024 } // 500MB limit
 });
 
+// Enable CORS with more permissive settings
 app.use(cors({
-    origin: [
-        'https://www.sub0-translate.com',
-        'https://video-subtitle-git-main-antaralmaawiys-projects.vercel.app',
-        'https://video-subtitle-4pzak8swt-antaralmaawiys-projects.vercel.app',
-        'http://localhost:3000'
-    ],
+    origin: '*',  // Allow all origins temporarily
     methods: ['GET', 'POST', 'OPTIONS'],
     credentials: true,
     optionsSuccessStatus: 204
 }));
 
-// Also ensure more generous body size limits
+// Set higher limits for request body
 app.use(express.json({ limit: '500mb' }));
 app.use(express.urlencoded({ extended: true, limit: '500mb' }));
 
