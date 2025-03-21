@@ -1,39 +1,46 @@
 // app/api/proxy-video/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 
+export const config = {
+    api: {
+        bodyParser: false, // Don't parse the files, handle as a stream
+        responseLimit: false, // No response size limit
+    },
+};
+
 export async function POST(request: NextRequest) {
     try {
         // Get the form data
         const formData = await request.formData();
 
-        // Extract the video file (disable ESLint warnings since we're not using these yet)
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        const videoFile = formData.get('video') as File;
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        const sourceLanguage = formData.get('sourceLanguage') as string;
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        const targetLanguage = formData.get('targetLanguage') as string;
+        console.log("Received form data, forwarding to backend...");
 
-        // Log that we received the upload (helpful for debugging)
-        console.log(`Video upload received: ${videoFile.name}, size: ${videoFile.size}, source: ${sourceLanguage}, target: ${targetLanguage}`);
-
-        // Generate a unique job ID
-        const jobId = Date.now().toString();
-
-        // Return immediately with a job ID
-        return NextResponse.json({
-            success: true,
-            message: 'Video upload received, processing started',
-            jobId: jobId,
-            // Provide mock/sample URLs
-            videoUrl: '/sample.mp4',  // From public folder
-            srtUrl: '/sample.srt',    // From public folder
-            transcription: "This is a sample transcription for testing purposes."
+        // Forward the request to your backend
+        const backendUrl = process.env.BACKEND_URL || 'http://159.89.123.141:3001';
+        const response = await fetch(`${backendUrl}/api/process-video`, {
+            method: 'POST',
+            body: formData,
+            // Don't set Content-Type here - fetch will set it with the correct boundary
         });
+
+        if (!response.ok) {
+            console.error(`Backend responded with status: ${response.status}`);
+            const errorText = await response.text();
+            throw new Error(`Backend API Error (${response.status}): ${errorText}`);
+        }
+
+        // Return the response from the backend API
+        const responseData = await response.json();
+        console.log("Processed video successfully, returning results");
+
+        return NextResponse.json(responseData);
     } catch (error) {
-        console.error('Proxy error:', error);
+        console.error('Proxy-video error:', error);
         return NextResponse.json(
-            { error: error instanceof Error ? error.message : 'An unexpected error occurred' },
+            {
+                error: error instanceof Error ? error.message : 'An unexpected error occurred',
+                timestamp: new Date().toISOString(),
+            },
             { status: 500 }
         );
     }

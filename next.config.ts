@@ -4,20 +4,21 @@ const nextConfig: NextConfig = {
     // Enable environment variables to be available in the application
     env: {
         OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+        BACKEND_URL: "http://159.89.123.141:3001", // Add explicit backend URL
     },
 
     // Add the images configuration here
     images: {
-        domains: ['lh3.googleusercontent.com'],
+        domains: ['lh3.googleusercontent.com', '159.89.123.141'], // Add your server IP
     },
 
     // Experimental features
     experimental: {
         // Allow larger server response size for videos
-        largePageDataBytes: 128 * 1024 * 1024,
+        largePageDataBytes: 256 * 1024 * 1024, // Increase to 256MB
         // Add this new config for App Router server actions
         serverActions: {
-            bodySizeLimit: '100mb', // THIS IS THE CRITICAL PART FOR YOUR ERROR
+            bodySizeLimit: '1000mb', // Increase to 1GB
         },
     },
 
@@ -31,6 +32,14 @@ const nextConfig: NextConfig = {
                     { key: 'Access-Control-Allow-Origin', value: '*' },
                     { key: 'Access-Control-Allow-Methods', value: 'GET,OPTIONS,PATCH,DELETE,POST,PUT' },
                     { key: 'Access-Control-Allow-Headers', value: 'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version' },
+                ],
+            },
+            {
+                // Add specific headers for proxy-video endpoint
+                source: '/api/proxy-video',
+                headers: [
+                    { key: 'Transfer-Encoding', value: 'chunked' },
+                    { key: 'Connection', value: 'keep-alive' },
                 ],
             },
             {

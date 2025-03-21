@@ -8,6 +8,7 @@ import { fileURLToPath } from 'url';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import fs from 'fs';
+import { exec } from 'child_process';
 
 // Use fileURLToPath for __dirname equivalent in ES modules
 const __filename = fileURLToPath(import.meta.url);
@@ -45,6 +46,16 @@ try {
         console.log('Using FFmpeg from:', ffmpegPath);
         ffmpeg.setFfmpegPath(ffmpegPath);
     }
+
+    // Verify FFmpeg is accessible
+    exec('ffmpeg -version', (error, stdout) => {
+        if (error) {
+            console.error('Error verifying FFmpeg installation:', error);
+            console.warn('⚠️ FFmpeg might not be properly installed or accessible');
+        } else {
+            console.log('FFmpeg version info:', stdout.split('\n')[0]);
+        }
+    });
 } catch (error) {
     console.error('Error setting FFmpeg path:', error);
 }
@@ -71,45 +82,67 @@ if (!fs.existsSync(tempDir)) {
     fs.mkdirSync(tempDir, { recursive: true });
 }
 
+// Ensure proper permissions for temp directory
+try {
+    fs.chmodSync(tempDir, 0o777);
+    console.log(`Set permissions for temp directory: ${tempDir}`);
+} catch (error) {
+    console.error('Error setting temp directory permissions:', error);
+}
+
 // Configure storage for temporary files only
 const storage = multer.diskStorage({
     destination: function (req, file, cb) {
         cb(null, tempDir);
     },
     filename: function (req, file, cb) {
-        cb(null, `${uuidv4()}-${file.originalname}`);
+        // Sanitize original filename to remove special characters
+        const sanitizedName = file.originalname.replace(/[^a-zA-Z0-9.-]/g, '_');
+        cb(null, `${uuidv4()}-${sanitizedName}`);
     }
 });
 
 const upload = multer({
     storage: storage,
-    limits: { fileSize: 500 * 1024 * 1024 } // 500MB limit
+    limits: { fileSize: 1000 * 1024 * 1024 }, // 1GB limit
+    fileFilter: (req, file, cb) => {
+        // Accept video files only
+        if (file.mimetype.startsWith('video/')) {
+            cb(null, true);
+        } else {
+            cb(new Error('Only video files are allowed'));
+        }
+    }
 });
 
-// Enable CORS with more permissive settings
+// Enable CORS with specific origins
 app.use(cors({
-    origin: '*',  // Allow all origins temporarily
+    origin: ['http://localhost:3000', 'https://www.sub0-translate.com'],
     methods: ['GET', 'POST', 'OPTIONS'],
     credentials: true,
+    allowedHeaders: ['Content-Type', 'Authorization'],
     optionsSuccessStatus: 204
 }));
 
 // Set higher limits for request body
-app.use(express.json({ limit: '500mb' }));
-app.use(express.urlencoded({ extended: true, limit: '500mb' }));
+app.use(express.json({ limit: '1000mb' }));
+app.use(express.urlencoded({ extended: true, limit: '1000mb' }));
 
 // Set longer default timeouts
 app.use((req, res, next) => {
-    req.setTimeout(600000); // 10 minutes
-    res.setTimeout(600000); // 10 minutes
+    req.setTimeout(900000); // 15 minutes
+    res.setTimeout(900000); // 15 minutes
     next();
 });
 
-app.use(express.json({ limit: '500mb' }));
-app.use(express.urlencoded({ extended: true, limit: '500mb' }));
-
 // Serve temporary files (they'll be cleaned up later)
-app.use('/temp', express.static(tempDir));
+app.use('/temp', express.static(tempDir, {
+    setHeaders: function (res) {
+        res.set('Access-Control-Allow-Origin', '*');
+        res.set('Access-Control-Allow-Methods', 'GET, OPTIONS');
+        res.set('Access-Control-Allow-Headers', 'Content-Type');
+    }
+}));
 
 // Add a root endpoint for testing
 app.get('/', (req, res) => {
@@ -125,7 +158,9 @@ app.get('/api/test', (req, res) => {
         environment: {
             nodeVersion: process.version,
             platform: process.platform,
-            apiKeyConfigured: !!process.env.OPENAI_API_KEY
+            apiKeyConfigured: !!process.env.OPENAI_API_KEY,
+            tempDirPath: tempDir,
+            tempDirExists: fs.existsSync(tempDir)
         },
         endpoints: [
             { path: '/api/process-video', method: 'POST', description: 'Process an uploaded video file' },
@@ -179,8 +214,7 @@ app.post('/api/process-youtube', async (req, res) => {
     }
 });
 
-// API endpoint to process an uploaded video - updated with streaming response
-// In your server.js file, modify the process-video endpoint:
+// API endpoint to process an uploaded video
 app.post('/api/process-video', upload.single('video'), async (req, res) => {
     let videoPath = '';
     let audioPath = '';
@@ -188,8 +222,8 @@ app.post('/api/process-video', upload.single('video'), async (req, res) => {
     let outputPath = '';
 
     // Set longer timeouts
-    req.setTimeout(600000); // 10 minutes
-    res.setTimeout(600000); // 10 minutes
+    req.setTimeout(900000); // 15 minutes
+    res.setTimeout(900000); // 15 minutes
 
     try {
         console.log('Received request to process uploaded video');
@@ -198,6 +232,16 @@ app.post('/api/process-video', upload.single('video'), async (req, res) => {
 
         if (!videoFile) {
             return res.status(400).json({ error: 'No video file provided' });
+        }
+
+        // Validate the file
+        if (!videoFile.mimetype.startsWith('video/')) {
+            return res.status(400).json({ error: 'The uploaded file is not a valid video format' });
+        }
+
+        // Verify file isn't empty
+        if (videoFile.size === 0) {
+            return res.status(400).json({ error: 'The uploaded video file is empty' });
         }
 
         console.log('Processing file:', videoFile.originalname, 'Size:', (videoFile.size / (1024 * 1024)).toFixed(2), 'MB');
@@ -218,10 +262,27 @@ app.post('/api/process-video', upload.single('video'), async (req, res) => {
                 .audioCodec('libmp3lame')
                 .audioBitrate('128k')
                 .toFormat('mp3')
-                .on('end', resolve)
-                .on('error', reject)
+                .on('start', commandLine => {
+                    console.log('FFmpeg started audio extraction with command:', commandLine);
+                })
+                .on('progress', progress => {
+                    console.log(`Audio extraction progress: ${progress.percent ? progress.percent.toFixed(1) : 0}%`);
+                })
+                .on('end', () => {
+                    console.log('Audio extraction completed');
+                    resolve();
+                })
+                .on('error', err => {
+                    console.error('Error extracting audio:', err);
+                    reject(err);
+                })
                 .run();
         });
+
+        // Check if audio file was created successfully
+        if (!fs.existsSync(audioPath) || fs.statSync(audioPath).size === 0) {
+            throw new Error('Failed to extract audio from video');
+        }
 
         // Step 3: Transcribe the audio
         console.log('Transcribing audio...');
@@ -284,30 +345,67 @@ app.post('/api/process-video', upload.single('video'), async (req, res) => {
         });
         fs.writeFileSync(srtPath, srtContent);
 
-        // Step 6: Embed subtitles
+        // Verify SRT file was created successfully
+        if (!fs.existsSync(srtPath) || fs.statSync(srtPath).size === 0) {
+            throw new Error('Failed to create subtitle file');
+        }
+
+        // Step 6: Embed subtitles with better error reporting
+        // Step 6: Embed subtitles with better error reporting
         console.log('Embedding subtitles...');
-        const escapedSrtPath = srtPath.replace(/\\/g, '\\\\').replace(/:/g, '\\:');
-        await new Promise((resolve, reject) => {
-            ffmpeg(videoPath)
-                .outputOptions([
-                    '-c:v libx264',
-                    '-c:a aac',
-                    `-vf`, `subtitles=${escapedSrtPath}:force_style='FontName=Arial,FontSize=14,PrimaryColour=&HFFFFFF,OutlineColour=&H000000,BackColour=&H00000000,BorderStyle=3,Outline=1.2,Shadow=0.8,MarginV=25,Alignment=2'`,
-                    '-crf 23',
-                    '-preset fast'
-                ])
-                .output(outputPath)
-                .on('end', resolve)
-                .on('error', reject)
-                .run();
-        });
+        try {
+            // Platform-specific path handling
+            const escapedSrtPath = process.platform === 'win32'
+                ? srtPath.replace(/\\/g, '\\\\')
+                : srtPath.replace(/[\:]/g, '\\:');
+
+            console.log(`Using subtitle path: ${escapedSrtPath}`);
+
+            await new Promise((resolve, reject) => {
+                ffmpeg(videoPath)
+                    .outputOptions([
+                        '-c:v libx264',
+                        '-c:a aac',
+                        `-vf`, `subtitles=${escapedSrtPath}:force_style='FontName=Arial,FontSize=14,PrimaryColour=&HFFFFFF,OutlineColour=&H000000,BackColour=&H00000000,BorderStyle=3,Outline=1.2,Shadow=0.8,MarginV=25,Alignment=2'`,
+                        '-crf 23',
+                        '-preset fast'
+                    ])
+                    .output(outputPath)
+                    .on('start', (commandLine) => {
+                        console.log('FFmpeg spawned with command:', commandLine);
+                    })
+                    .on('progress', (progress) => {
+                        console.log(`FFmpeg progress: ${progress.percent ? progress.percent.toFixed(1) : 0}% done`);
+                    })
+                    .on('end', () => {
+                        console.log('FFmpeg processing finished successfully');
+                        resolve();
+                    })
+                    .on('error', (err) => {
+                        console.error('FFmpeg error:', err);
+                        reject(new Error(`FFmpeg processing failed: ${err.message}`));
+                    })
+                    .run();
+            });
+        } catch (error) {
+            console.error('Error during FFmpeg processing:', error);
+            throw error;
+        }
+
+        // Verify output video file was created successfully
+        if (!fs.existsSync(outputPath) || fs.statSync(outputPath).size === 0) {
+            throw new Error('Failed to embed subtitles in video');
+        }
 
         // Step 7: Return URLs
-        const serverBaseUrl = process.env.SERVER_BASE_URL || `http://localhost:${port}`;
+        const serverBaseUrl = process.env.SERVER_BASE_URL || `http://159.89.123.141:3001`;
         const processedVideoUrl = `${serverBaseUrl}/temp/${path.basename(outputPath)}`;
         const srtUrl = `${serverBaseUrl}/temp/${path.basename(srtPath)}`;
 
-        console.log('Processing complete. Returning URLs');
+        console.log('Processing complete. Returning URLs:', {
+            videoUrl: processedVideoUrl,
+            srtUrl: srtUrl
+        });
 
         // Schedule cleanup
         const filesToCleanup = [videoPath, audioPath, srtPath, outputPath];
@@ -330,13 +428,17 @@ app.post('/api/process-video', upload.single('video'), async (req, res) => {
             errorMessage = error.message;
         }
 
-        res.status(500).json({ error: errorMessage });
+        res.status(500).json({
+            error: errorMessage,
+            timestamp: new Date().toISOString()
+        });
 
         // Clean up files
         [videoPath, audioPath, srtPath, outputPath].forEach(file => {
             if (file && fs.existsSync(file)) {
                 try {
                     fs.unlinkSync(file);
+                    console.log(`Cleaned up file after error: ${file}`);
                 } catch (e) {
                     console.error(`Error cleaning up file ${file}:`, e);
                 }
