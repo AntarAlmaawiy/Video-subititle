@@ -30,6 +30,20 @@ try {
         '/opt/homebrew/bin/ffmpeg',       // Mac (Homebrew on Apple Silicon)
         'C:\\ffmpeg\\bin\\ffmpeg.exe'     // Windows
     ];
+    // After setting the path
+    if (ffmpegPath) {
+        ffmpeg.setFfmpegPath(ffmpegPath);
+
+        // Verify FFmpeg is accessible
+        exec('ffmpeg -version', (error, stdout) => {
+            if (error) {
+                console.error('Error verifying FFmpeg installation:', error);
+                console.warn('⚠️ FFmpeg might not be properly installed or accessible');
+            } else {
+                console.log('FFmpeg version info:', stdout.split('\n')[0]);
+            }
+        });
+    }
 
     let ffmpegPath = null;
     for (const path of possiblePaths) {
@@ -104,7 +118,7 @@ const storage = multer.diskStorage({
 
 const upload = multer({
     storage: storage,
-    limits: { fileSize: 1000 * 1024 * 1024 }, // 1GB limit
+    limits: { fileSize: 1000 * 1024 * 1024 }, // Increase from 500MB to 1000MB
     fileFilter: (req, file, cb) => {
         // Accept video files only
         if (file.mimetype.startsWith('video/')) {
@@ -124,7 +138,6 @@ app.use(cors({
     optionsSuccessStatus: 204
 }));
 
-// Set higher limits for request body
 app.use(express.json({ limit: '1000mb' }));
 app.use(express.urlencoded({ extended: true, limit: '1000mb' }));
 

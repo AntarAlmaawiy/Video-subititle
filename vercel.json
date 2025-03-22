@@ -1,0 +1,19 @@
+{
+  "functions": {
+    "api/proxy-video/route.ts": {
+      "memory": 1024,
+      "maxDuration": 60
+    }
+  },
+  "routes": [
+    {
+      "src": "/api/proxy-video",
+      "dest": "/api/proxy-video/route.ts",
+      "methods": ["POST"],
+      "headers": {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS"
+      }
+    }
+  ]
+}
