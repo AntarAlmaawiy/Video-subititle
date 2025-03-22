@@ -209,8 +209,8 @@ export default function SubtitleGenerator() {
                 setProcessingProgress(prev => Math.min(prev + 1, 90));
             }, 1000);
 
-            // Send the request to your proxy endpoint
-            const response = await fetch("/api/proxy-video", {
+            // Send the request directly to your backend server instead of through Vercel
+            const response = await fetch("http://159.89.123.141:3001/api/process-video", {
                 method: "POST",
                 body: formData
             });
