@@ -3,11 +3,11 @@ import { NextRequest, NextResponse } from 'next/server';
 
 export const config = {
     api: {
-        bodyParser: false,
-        responseLimit: false,
-        externalResolver: true,
+        bodyParser: false, // Don't parse the files, handle as a stream
+        responseLimit: false, // No response size limit
     },
 };
+
 export async function POST(request: NextRequest) {
     try {
         // Get the form data
