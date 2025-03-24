@@ -16,7 +16,7 @@ export async function POST(request: NextRequest) {
         console.log("Received form data, forwarding to backend...");
 
         // Forward the request to your backend
-        const backendUrl = process.env.BACKEND_URL || 'http://159.89.123.141:3001';
+        const backendUrl = process.env.BACKEND_URL || 'https://api.sub0-translate.com';
         const response = await fetch(`${backendUrl}/api/process-video`, {
             method: 'POST',
             body: formData,

@@ -131,7 +131,7 @@ const upload = multer({
 
 // Enable CORS with specific origins
 app.use(cors({
-    origin: ['http://localhost:3000', 'https://www.sub0-translate.com'],
+    origin: ['http://localhost:3000', 'https://sub0-translate.com', 'https://www.sub0-translate.com'],
     methods: ['GET', 'POST', 'OPTIONS'],
     credentials: true,
     allowedHeaders: ['Content-Type', 'Authorization'],
