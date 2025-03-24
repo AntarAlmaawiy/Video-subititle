@@ -4,12 +4,12 @@ const nextConfig: NextConfig = {
     // Enable environment variables to be available in the application
     env: {
         OPENAI_API_KEY: process.env.OPENAI_API_KEY,
-        BACKEND_URL: "http://159.89.123.141:3001", // Add explicit backend URL
+        BACKEND_URL: "https://api.sub0-translate.com", // Update to use domain with HTTPS
     },
 
     // Add the images configuration here
     images: {
-        domains: ['lh3.googleusercontent.com', '159.89.123.141'], // Add your server IP
+        domains: ['lh3.googleusercontent.com', '159.89.123.141', 'api.sub0-translate.com'], // Add your domain
     },
 
     // Experimental features

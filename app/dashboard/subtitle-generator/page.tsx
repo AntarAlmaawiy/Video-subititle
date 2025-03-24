@@ -210,7 +210,7 @@ export default function SubtitleGenerator() {
             }, 1000);
 
             // Send the request directly to your backend server instead of through Vercel
-            const response = await fetch("/api/proxy-video", {
+            const response = await fetch("https://api.sub0-translate.com/api/process-video", {
                 method: "POST",
                 body: formData
             });
