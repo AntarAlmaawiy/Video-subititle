@@ -675,7 +675,7 @@ export default function ManagePlanPage() {
                             ) : (
                                 <RefreshCw className="h-4 w-4 mr-1" />
                             )}
-                            Refresh
+                            Refresh lol
                         </button>
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
