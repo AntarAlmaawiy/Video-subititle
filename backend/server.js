@@ -149,13 +149,8 @@ app.use((req, res, next) => {
 });
 
 // Serve temporary files (they'll be cleaned up later)
-app.use('/temp', express.static(tempDir, {
-    setHeaders: function (res) {
-        res.set('Access-Control-Allow-Origin', 'https://www.sub0-translate.com');
-        res.set('Access-Control-Allow-Methods', 'GET, OPTIONS');
-        res.set('Access-Control-Allow-Headers', 'Content-Type');
-    }
-}));
+app.use('/temp', express.static(tempDir));
+
 // Add a root endpoint for testing
 app.get('/', (req, res) => {
     res.send('Video processing server is running!');
