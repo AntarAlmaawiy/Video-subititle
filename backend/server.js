@@ -131,7 +131,7 @@ const upload = multer({
 
 // Enable CORS with specific origins
 app.use(cors({
-    origin: 'http://localhost:3000',
+    origin: 'https://www.sub0-translate.com',
     methods: ['GET', 'POST', 'OPTIONS'],
     credentials: true,
     allowedHeaders: ['Content-Type', 'Authorization'],
@@ -151,7 +151,7 @@ app.use((req, res, next) => {
 // Serve temporary files (they'll be cleaned up later)
 app.use('/temp', express.static(tempDir, {
     setHeaders: function (res) {
-        res.set('Access-Control-Allow-Origin', '*');
+        res.set('Access-Control-Allow-Origin', 'https://www.sub0-translate.com'); // Change from '*' to specific domain
         res.set('Access-Control-Allow-Methods', 'GET, OPTIONS');
         res.set('Access-Control-Allow-Headers', 'Content-Type');
     }
@@ -411,7 +411,7 @@ app.post('/api/process-video', upload.single('video'), async (req, res) => {
         }
 
         // Step 7: Return URLs
-        const serverBaseUrl = process.env.SERVER_BASE_URL || `http://159.89.123.141:3001`;
+        const serverBaseUrl = process.env.SERVER_BASE_URL || `https://api.sub0-translate.com`;
         const processedVideoUrl = `${serverBaseUrl}/temp/${path.basename(outputPath)}`;
         const srtUrl = `${serverBaseUrl}/temp/${path.basename(srtPath)}`;
 
