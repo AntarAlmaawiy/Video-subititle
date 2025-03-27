@@ -6,16 +6,23 @@ import { getAdminSupabase } from '@/lib/admin-supabase';
 // Force dynamic API route to ensure it's never cached
 export const dynamic = 'force-dynamic';
 
-// Initialize Stripe
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || '', {
+// Initialize Stripe with correct mode detection
+const stripeSecretKey = process.env.STRIPE_SECRET_KEY || '';
+const isProduction = !stripeSecretKey.startsWith('sk_test_');
+
+const stripe = new Stripe(stripeSecretKey, {
     apiVersion: '2025-02-24.acacia',
+    // Add retries for production reliability
+    maxNetworkRetries: isProduction ? 2 : 0,
 });
 
 const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
 
 export async function POST(request: Request) {
+    const startTime = Date.now();
+
     try {
-        console.log('🔔 Webhook endpoint called at:', new Date().toISOString());
+        console.log(`🔔 ${isProduction ? 'PRODUCTION' : 'TEST'} Webhook called at:`, new Date().toISOString());
 
         const body = await request.text();
         const signature = request.headers.get('stripe-signature') || '';
@@ -44,9 +51,9 @@ export async function POST(request: Request) {
         }
 
         const adminSupabase = getAdminSupabase();
-        // Add to your webhook handler
+
+        // Add to your webhook handler for debugging
         if (event.type === 'checkout.session.completed') {
-            // Write to a temp file or log for debugging
             console.log('WEBHOOK EVENT:', JSON.stringify(event, null, 2));
         }
 
@@ -119,7 +126,6 @@ export async function POST(request: Request) {
 
                 let result;
 
-                // Fix for the checkout.session.completed handler section
                 if (existingSubscription) {
                     console.log(`🔄 Updating existing subscription for user ${userId}`, existingSubscription);
 
@@ -131,10 +137,10 @@ export async function POST(request: Request) {
                         old_stripe_customer_id: existingSubscription.stripe_customer_id
                     })}`);
 
-                    // Update with the full subscription data instead of just setting to 'canceled'
+                    // Update with the full subscription data
                     const { data, error: updateError } = await adminSupabase
                         .from('user_subscriptions')
-                        .update(subscriptionData)  // Use the full subscriptionData object
+                        .update(subscriptionData)
                         .eq('user_id', userId)
                         .select();
 
@@ -147,8 +153,6 @@ export async function POST(request: Request) {
                     // After update - verification
                     console.log(`After update: ${JSON.stringify(data)}`);
                 } else {
-                    // This part is fine - creating a new subscription
-                } {
                     console.log(`➕ Creating new subscription for user ${userId}`);
                     const { data, error: insertError } = await adminSupabase
                         .from('user_subscriptions')
@@ -159,10 +163,7 @@ export async function POST(request: Request) {
                         .select();
 
                     if (insertError) {
-                        console.error(`
-                        
-                        
-                    ❌ Error inserting subscription: ${insertError.message}`);
+                        console.error(`❌ Error inserting subscription: ${insertError.message}`);
                         return NextResponse.json({ message: insertError.message }, { status: 500 });
                     }
                     result = data;
@@ -264,8 +265,6 @@ export async function POST(request: Request) {
                         // Return early to prevent overriding the canceled status
                         return NextResponse.json({ received: true });
                     }
-
-                    console.log(`Current subscription in database: Plan=${currentSub?.plan_id}, Status=${currentSub?.status}, LastUpdated=${currentSub?.updated_at}`);
 
                     console.log(`Step 4: Determining plan ID`);
                     // Get plan info from metadata or items
@@ -419,11 +418,25 @@ export async function POST(request: Request) {
                 console.log(`ℹ️ Unhandled event type: ${event.type}`);
         }
 
-        return NextResponse.json({ received: true });
+        const processingTime = Date.now() - startTime;
+        console.log(`✅ Webhook processed in ${processingTime}ms`);
+
+        return NextResponse.json({
+            received: true,
+            processingTime,
+            environment: isProduction ? 'production' : 'test'
+        });
+
     } catch (error: unknown) {
-        console.error('❌ Webhook error:', error);
+        const processingTime = Date.now() - startTime;
+        console.error(`❌ Webhook error after ${processingTime}ms:`, error);
+
         return NextResponse.json(
-            {message: error instanceof Error ? error.message : 'Webhook handler error'},
+            {
+                message: error instanceof Error ? error.message : 'Webhook handler error',
+                processingTime,
+                environment: isProduction ? 'production' : 'test'
+            },
             { status: 500 }
         );
     }

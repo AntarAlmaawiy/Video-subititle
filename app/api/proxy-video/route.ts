@@ -1,9 +1,4 @@
-// app/api/proxy-video/route.ts
 import { NextRequest, NextResponse } from 'next/server';
-import { processVideoWithSubtitles } from '@/lib/video-processing/subtitle-embedder';
-import { writeFile } from 'fs/promises';
-import { join } from 'path';
-import { mkdir } from 'fs/promises';
 
 export const config = {
     api: {
@@ -12,73 +7,32 @@ export const config = {
     },
 };
 
-// Simple function to generate random ID (replacement for uuid)
-function generateId(length = 12) {
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-    let result = '';
-    for (let i = 0; i < length; i++) {
-        result += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
-    return result;
-}
-
 export async function POST(request: NextRequest) {
     try {
         // Get the form data
         const formData = await request.formData();
-        const videoFile = formData.get('video') as File;
-        const sourceLanguage = formData.get('sourceLanguage') as string || 'auto';
-        const targetLanguage = formData.get('targetLanguage') as string || 'en';
+        console.log("Received form data, forwarding to backend...");
 
-        if (!videoFile) {
-            return NextResponse.json({ error: 'No video file provided' }, { status: 400 });
+        // Forward the request to your backend
+        const backendUrl = process.env.BACKEND_URL || 'https://api.sub0-translate.com';
+        const response = await fetch(`${backendUrl}/api/process-video`, {
+            method: 'POST',
+            body: formData,
+            // Don't set Content-Type here - fetch will set it with the correct boundary
+        });
+
+        if (!response.ok) {
+            console.error(`Backend responded with status: ${response.status}`);
+            const errorText = await response.text();
+            throw new Error(`Backend API Error (${response.status}): ${errorText}`);
         }
 
-        console.log(`Processing video: ${videoFile.name}, size: ${(videoFile.size / (1024 * 1024)).toFixed(2)}MB`);
-
-        // Convert the file to ArrayBuffer
-        const videoBuffer = await videoFile.arrayBuffer();
-
-        // Process the video using your existing function
-        const result = await processVideoWithSubtitles(
-            videoBuffer,
-            'file',
-            sourceLanguage,
-            targetLanguage,
-            (progress, stage) => {
-                console.log(`Processing progress: ${progress}% (${stage})`);
-            }
-        );
-
-        // Save the SRT content to a file and create a URL for it
-        const baseDir = process.cwd();
-        const publicDir = join(baseDir, 'public', 'processed');
-
-        // Ensure the directory exists
-        await mkdir(publicDir, { recursive: true });
-
-        // Generate a unique filename using timestamp and random ID
-        const timestamp = Date.now();
-        const randomId = generateId(8);
-        const srtFilename = `subtitles-${timestamp}-${randomId}.srt`;
-        const srtPath = join(publicDir, srtFilename);
-
-        // Write the SRT content to a file
-        await writeFile(srtPath, result.srtContent);
-
-        // Generate URL for the SRT file
-        const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
-        const srtUrl = `${baseUrl}/processed/${srtFilename}`;
-
-        // Return the response with URLs
-        return NextResponse.json({
-            success: true,
-            videoUrl: result.videoUrl,
-            srtUrl: srtUrl,
-            transcription: result.transcription
-        });
+        // Return the response from the backend API
+        const responseData = await response.json();
+        console.log("Processed video successfully, returning results");
+        return NextResponse.json(responseData);
     } catch (error) {
-        console.error('Video processing error:', error);
+        console.error('Proxy-video error:', error);
         return NextResponse.json(
             {
                 error: error instanceof Error ? error.message : 'An unexpected error occurred',
