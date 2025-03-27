@@ -431,6 +431,31 @@ export async function POST(request: Request) {
         const processingTime = Date.now() - startTime;
         console.error(`❌ Webhook error after ${processingTime}ms:`, error);
 
+        // Detailed error logging with proper typing
+        if (error instanceof Error) {
+            // Create an interface for database errors
+            interface DatabaseError {
+                code?: string;
+                details?: string;
+                hint?: string;
+            }
+
+            // Log standard Error properties
+            const errorDetails: Record<string, unknown> = {
+                name: error.name,
+                message: error.message,
+                stack: error.stack,
+            };
+
+            // Add database-specific properties if they exist
+            const dbError = error as Error & Partial<DatabaseError>;
+            if (dbError.code) errorDetails.code = dbError.code;
+            if (dbError.details) errorDetails.details = dbError.details;
+            if (dbError.hint) errorDetails.hint = dbError.hint;
+
+            console.error('Detailed error information:', errorDetails);
+        }
+
         return NextResponse.json(
             {
                 message: error instanceof Error ? error.message : 'Webhook handler error',
