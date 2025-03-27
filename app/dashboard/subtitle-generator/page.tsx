@@ -209,8 +209,8 @@ export default function SubtitleGenerator() {
                 setProcessingProgress(prev => Math.min(prev + 1, 90));
             }, 1000);
 
-            // Send the request to your Vercel API route instead of DigitalOcean
-            const response = await fetch("/api/transcribe", {
+            // Send the request directly to your backend server instead of through Vercel
+            const response = await fetch("https://api.sub0-translate.com/api/process-video", {
                 method: "POST",
                 body: formData
             });
@@ -224,7 +224,7 @@ export default function SubtitleGenerator() {
 
             const data = await response.json();
 
-            // Set the URLs returned from your Vercel API
+            // Using the returned mock URLs - these will be served from your public folder
             setProcessedVideoUrl(data.videoUrl);
             setSrtUrl(data.srtUrl);
             setTranscription(data.transcription);
