@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import Stripe from 'stripe';
 import { getAdminSupabase } from '@/lib/admin-supabase';
 
+
 // Force dynamic API route to ensure it's never cached
 export const dynamic = 'force-dynamic';
 
@@ -23,6 +24,75 @@ interface DatabaseError {
     code?: string;
     details?: string;
     hint?: string;
+}
+
+// Function to ensure user exists in the database
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function ensureUserExists(supabase: any, userId: string, email = ''): Promise<boolean> {
+    console.log(`Ensuring user exists in database: ${userId}`);
+
+    try {
+        // First check if user exists in auth.users table
+        const { data: authUser, error: authError } = await supabase
+            .from('auth.users')
+            .select('id')
+            .eq('id', userId)
+            .single();
+
+        if (!authError && authUser) {
+            console.log(`User exists in auth.users: ${userId}`);
+            return true;
+        }
+
+        // Then check profiles table
+        const { data: profileUser, error: profileError } = await supabase
+            .from('profiles')
+            .select('id')
+            .eq('id', userId)
+            .single();
+
+        if (!profileError && profileUser) {
+            console.log(`User exists in profiles: ${userId}`);
+            return true;
+        }
+
+        console.log(`User ${userId} doesn't exist in database, creating...`);
+
+        // Create in profiles table (this is usually safer than auth.users)
+        const { error: insertError } = await supabase
+            .from('profiles')
+            .insert({
+                id: userId,
+                email: email,
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString()
+            });
+
+        if (insertError) {
+            console.error(`Failed to create user profile: ${insertError.message}`);
+
+            // Try an alternative method - RLS insert as an anonymous user
+            const { error: rpcError } = await supabase
+                .rpc('create_user_profile', {
+                    user_id_param: userId,
+                    email_param: email
+                });
+
+            if (rpcError) {
+                console.error(`RPC create_user_profile failed: ${rpcError.message}`);
+                return false;
+            }
+
+            console.log(`Created user ${userId} via RPC function`);
+            return true;
+        }
+
+        console.log(`Created user ${userId} in profiles table`);
+        return true;
+    } catch (error) {
+        console.error('Error in ensureUserExists:', error);
+        return false;
+    }
 }
 
 export async function POST(request: Request): Promise<NextResponse> {
@@ -94,6 +164,24 @@ export async function POST(request: Request): Promise<NextResponse> {
                 const customerId = String(session.customer);
                 console.log(`👤 Customer ID: ${customerId}`);
 
+                // Get customer email from Stripe
+                let customerEmail = '';
+                try {
+                    const customer = await stripe.customers.retrieve(customerId);
+                    if (typeof customer !== 'string' && !customer.deleted) {
+                        customerEmail = customer.email || '';
+                    }
+                } catch (err) {
+                    console.error('Error fetching customer details:', err);
+                }
+
+                // Ensure user exists in the database
+                const userExists = await ensureUserExists(adminSupabase, userId, customerEmail);
+                if (!userExists) {
+                    console.log(`Could not ensure user ${userId} exists. Acknowledging webhook but will try to create subscription anyway.`);
+                    // We continue anyway, it might work if the foreign key constraint isn't triggered
+                }
+
                 // Retrieve the subscription details from Stripe
                 const subscription = await stripe.subscriptions.retrieve(subscriptionId);
 
@@ -162,6 +250,34 @@ export async function POST(request: Request): Promise<NextResponse> {
                         console.log(`After update: ${JSON.stringify(data)}`);
                     } else {
                         console.log(`➕ Creating new subscription for user ${userId}`);
+
+                        // Try RPC function if it exists (to handle RLS)
+                        try {
+                            const { error: rpcError } = await adminSupabase
+                                .rpc('create_user_subscription', {
+                                    user_id_param: userId,
+                                    plan_id_param: planId,
+                                    status_param: subscription.status,
+                                    billing_cycle_param: billingCycle,
+                                    next_billing_date_param: nextBillingDate,
+                                    stripe_subscription_id_param: subscriptionId,
+                                    stripe_customer_id_param: customerId
+                                });
+
+                            if (rpcError) {
+                                console.log(`RPC method failed, trying direct insert: ${rpcError.message}`);
+                                // Fall through to direct insert
+                            } else {
+                                console.log(`Successfully created subscription via RPC function`);
+                                result = [{ id: 'created-via-rpc' }]; // Dummy result to indicate success
+                                break; // Skip direct insert
+                            }
+                        } catch (rpcErr) {
+                            console.error('Error calling RPC function:', rpcErr);
+                            // Fall through to direct insert
+                        }
+
+                        // Direct insert if RPC fails or doesn't exist
                         const { data, error: insertError } = await adminSupabase
                             .from('user_subscriptions')
                             .insert({
@@ -171,10 +287,53 @@ export async function POST(request: Request): Promise<NextResponse> {
                             .select();
 
                         if (insertError) {
-                            console.error(`❌ Error inserting subscription: ${insertError.message}`);
-                            throw new Error(`Error inserting subscription: ${insertError.message}`);
+                            // If insert fails with foreign key error, try special case handling
+                            if (insertError.message && insertError.message.includes('violates foreign key constraint')) {
+                                console.error(`❌ Foreign key violation: ${insertError.message}`);
+
+                                // Try one more approach - create profiles record if needed
+                                const { error: profileError } = await adminSupabase
+                                    .from('profiles')
+                                    .select('id')
+                                    .eq('id', userId)
+                                    .single();
+
+                                if (profileError && profileError.code === 'PGRST116') {
+                                    console.log(`Creating missing profile for user ${userId}`);
+                                    await adminSupabase
+                                        .from('profiles')
+                                        .insert({
+                                            id: userId,
+                                            email: customerEmail,
+                                            created_at: new Date().toISOString(),
+                                            updated_at: new Date().toISOString()
+                                        });
+
+                                    // Try insert again after creating profile
+                                    const { data: retryData, error: retryError } = await adminSupabase
+                                        .from('user_subscriptions')
+                                        .insert({
+                                            ...subscriptionData,
+                                            created_at: new Date().toISOString()
+                                        })
+                                        .select();
+
+                                    if (retryError) {
+                                        console.error(`❌ Retry insert also failed: ${retryError.message}`);
+                                        throw new Error(`Error inserting subscription after profile creation: ${retryError.message}`);
+                                    }
+
+                                    result = retryData;
+                                } else {
+                                    throw new Error(`Error inserting subscription: ${insertError.message}`);
+                                }
+                            } else {
+                                console.error(`❌ Error inserting subscription: ${insertError.message}`);
+                                throw new Error(`Error inserting subscription: ${insertError.message}`);
+                            }
+                        } else {
+                            result = data;
                         }
-                        result = data;
                     }
 
                     // Verify the result
@@ -227,6 +386,25 @@ export async function POST(request: Request): Promise<NextResponse> {
                         } else {
                             throw new Error(`No user data found for subscription ${subscription.id}`);
                         }
+                    }
+
+                    // Get customer email from Stripe if we have a customer ID
+                    let customerEmail = '';
+                    if (subscription.customer) {
+                        try {
+                            const customer = await stripe.customers.retrieve(String(subscription.customer));
+                            if (typeof customer !== 'string' && !customer.deleted) {
+                                customerEmail = customer.email || '';
+                            }
+                        } catch (err) {
+                            console.error('Error fetching customer details:', err);
+                        }
+                    }
+
+                    // Ensure user exists in database
+                    const userExists = await ensureUserExists(adminSupabase, userId, customerEmail);
+                    if (!userExists) {
+                        console.log(`Could not ensure user ${userId} exists, but will try to continue.`);
                     }
 
                     const nextBillingDate = new Date(subscription.current_period_end * 1000)
@@ -341,21 +519,52 @@ export async function POST(request: Request): Promise<NextResponse> {
                     };
                     console.log(`Update data:`, updateData);
 
-                    console.log(`Executing database update for user ${userId}`);
-                    const { data, error: updateError } = await adminSupabase
-                        .from('user_subscriptions')
-                        .update(updateData)
-                        .eq('user_id', userId)
-                        .select();
+                    try {
+                        console.log(`Executing database update for user ${userId}`);
+                        const { data, error: updateError } = await adminSupabase
+                            .from('user_subscriptions')
+                            .update(updateData)
+                            .eq('user_id', userId)
+                            .select();
 
-                    if (updateError) {
-                        console.error(`❌ Error updating subscription: ${updateError.message}`);
-                        throw new Error(`Error updating subscription: ${updateError.message}`);
-                    } else {
-                        console.log(`✅ Successfully updated subscription ${subscription.id} to ${planId} via ${planSource}`);
-                        console.log(`Updated data:`, data);
+                        if (updateError) {
+                            console.error(`❌ Error updating subscription: ${updateError.message}`);
+
+                            // If subscription doesn't exist yet, try to create it
+                            if (updateError.message.includes('no rows')) {
+                                console.log(`No subscription found to update, creating a new one`);
+
+                                const { error: insertError } = await adminSupabase
+                                    .from('user_subscriptions')
+                                    .insert({
+                                        ...updateData,
+                                        user_id: userId,
+                                        stripe_subscription_id: subscription.id,
+                                        stripe_customer_id: String(subscription.customer),
+                                        created_at: new Date().toISOString()
+                                    });
+
+                                if (insertError) {
+                                    console.error(`❌ Error creating subscription: ${insertError.message}`);
+                                    throw new Error(`Error creating subscription: ${insertError.message}`);
+                                }
+
+                                console.log(`✅ Successfully created new subscription for user ${userId}`);
+                            } else {
+                                throw new Error(`Error updating subscription: ${updateError.message}`);
+                            }
+                        } else {
+                            console.log(`✅ Successfully updated subscription ${subscription.id} to ${planId} via ${planSource}`);
+                            console.log(`Updated data:`, data);
+                        }
+                    } catch (dbError) {
+                        const errorMsg = dbError instanceof Error ? dbError.message : String(dbError);
+                        console.error(`Database error: ${errorMsg}`);
+                        return NextResponse.json({
+                            received: true,
+                            error: errorMsg
+                        });
                     }
-
                 } catch (error) {
                     // Catch and log any errors in this specific event handler
                     const errorMsg = error instanceof Error ? error.message : String(error);
@@ -404,8 +613,7 @@ export async function POST(request: Request): Promise<NextResponse> {
                             plan_id: 'free', // Downgrade to free plan
                             updated_at: new Date().toISOString()
                         })
-                        .eq('user_id', userId)
-                        .select();
+                        .eq('user_id', userId);
 
                     if (updateError) {
                         console.error(`❌ Error marking subscription as canceled: ${updateError.message}`);
