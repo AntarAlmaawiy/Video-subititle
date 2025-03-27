@@ -18,7 +18,14 @@ const stripe = new Stripe(stripeSecretKey, {
 
 const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
 
-export async function POST(request: Request) {
+// Interface for database errors
+interface DatabaseError {
+    code?: string;
+    details?: string;
+    hint?: string;
+}
+
+export async function POST(request: Request): Promise<NextResponse> {
     const startTime = Date.now();
 
     try {
@@ -112,82 +119,79 @@ export async function POST(request: Request) {
 
                 console.log(`💾 Preparing to save subscription data:`, subscriptionData);
 
-                // Check if user already has a subscription
-                const { data: existingSubscription, error: fetchError } = await adminSupabase
-                    .from('user_subscriptions')
-                    .select('*')
-                    .eq('user_id', userId)
-                    .single();
-
-                if (fetchError && fetchError.code !== 'PGRST116') {
-                    console.error(`❌ Error fetching existing subscription: ${fetchError.message}`);
-                    return NextResponse.json({ message: fetchError.message }, { status: 500 });
-                }
-
-                let result;
-
-                if (existingSubscription) {
-                    console.log(`🔄 Updating existing subscription for user ${userId}`, existingSubscription);
-
-                    // Before update - log what we're updating from
-                    console.log(`Before update: ${JSON.stringify({
-                        old_plan_id: existingSubscription.plan_id,
-                        old_status: existingSubscription.status,
-                        old_stripe_subscription_id: existingSubscription.stripe_subscription_id,
-                        old_stripe_customer_id: existingSubscription.stripe_customer_id
-                    })}`);
-
-                    // Update with the full subscription data
-                    const { data, error: updateError } = await adminSupabase
-                        .from('user_subscriptions')
-                        .update(subscriptionData)
-                        .eq('user_id', userId)
-                        .select();
-
-                    if (updateError) {
-                        console.error(`❌ Error updating subscription: ${updateError.message}`);
-                        return NextResponse.json({ message: updateError.message }, { status: 500 });
-                    }
-                    result = data;
-
-                    // After update - verification
-                    console.log(`After update: ${JSON.stringify(data)}`);
-                } else {
-                    console.log(`➕ Creating new subscription for user ${userId}`);
-                    const { data, error: insertError } = await adminSupabase
-                        .from('user_subscriptions')
-                        .insert({
-                            ...subscriptionData,
-                            created_at: new Date().toISOString()
-                        })
-                        .select();
-
-                    if (insertError) {
-                        console.error(`❌ Error inserting subscription: ${insertError.message}`);
-                        return NextResponse.json({ message: insertError.message }, { status: 500 });
-                    }
-                    result = data;
-                }
-
-                // Verify the result
-                if (result && result.length > 0) {
-                    console.log(`✅ Subscription successfully saved for user ${userId}, plan ${planId}`);
-                    console.log(`Result: ${JSON.stringify(result)}`);
-
-                    // Double-check by fetching again
-                    const { data: verifyData, error: verifyError } = await adminSupabase
+                try {
+                    // Check if user already has a subscription
+                    const { data: existingSubscription, error: fetchError } = await adminSupabase
                         .from('user_subscriptions')
                         .select('*')
                         .eq('user_id', userId)
                         .single();
 
-                    if (verifyError) {
-                        console.error(`❌ Error verifying update: ${verifyError.message}`);
-                    } else {
-                        console.log(`✅ Verification - database now has:`, verifyData);
+                    if (fetchError && fetchError.code !== 'PGRST116') {
+                        console.error(`❌ Error fetching existing subscription: ${fetchError.message}`);
+                        throw new Error(`Error fetching existing subscription: ${fetchError.message}`);
                     }
-                } else {
-                    console.error(`⚠️ No error, but no result returned when saving subscription`);
+
+                    let result;
+
+                    if (existingSubscription) {
+                        console.log(`🔄 Updating existing subscription for user ${userId}`);
+
+                        // Before update - log what we're updating from
+                        console.log(`Before update: ${JSON.stringify({
+                            old_plan_id: existingSubscription.plan_id,
+                            old_status: existingSubscription.status,
+                            old_stripe_subscription_id: existingSubscription.stripe_subscription_id,
+                            old_stripe_customer_id: existingSubscription.stripe_customer_id
+                        })}`);
+
+                        // Update with the full subscription data
+                        const { data, error: updateError } = await adminSupabase
+                            .from('user_subscriptions')
+                            .update(subscriptionData)
+                            .eq('user_id', userId)
+                            .select();
+
+                        if (updateError) {
+                            console.error(`❌ Error updating subscription: ${updateError.message}`);
+                            throw new Error(`Error updating subscription: ${updateError.message}`);
+                        }
+                        result = data;
+
+                        // After update - verification
+                        console.log(`After update: ${JSON.stringify(data)}`);
+                    } else {
+                        console.log(`➕ Creating new subscription for user ${userId}`);
+                        const { data, error: insertError } = await adminSupabase
+                            .from('user_subscriptions')
+                            .insert({
+                                ...subscriptionData,
+                                created_at: new Date().toISOString()
+                            })
+                            .select();
+
+                        if (insertError) {
+                            console.error(`❌ Error inserting subscription: ${insertError.message}`);
+                            throw new Error(`Error inserting subscription: ${insertError.message}`);
+                        }
+                        result = data;
+                    }
+
+                    // Verify the result
+                    if (result && result.length > 0) {
+                        console.log(`✅ Subscription successfully saved for user ${userId}, plan ${planId}`);
+                    } else {
+                        console.error(`⚠️ No error, but no result returned when saving subscription`);
+                    }
+                } catch (dbError) {
+                    const errorMsg = dbError instanceof Error ? dbError.message : 'Unknown database error';
+                    console.error(`Database operation failed: ${errorMsg}`);
+
+                    // Always acknowledge receipt to prevent retries
+                    return NextResponse.json({
+                        received: true,
+                        error: `Database operation failed: ${errorMsg}`
+                    });
                 }
 
                 break;
@@ -200,9 +204,6 @@ export async function POST(request: Request) {
 
                     // Add detailed logging
                     console.log(`Subscription metadata:`, subscription.metadata);
-
-                    // Log each step
-                    console.log(`Step 1: Finding user for subscription ${subscription.id}`);
 
                     // Get userId from metadata or look it up
                     let userId = subscription.metadata?.userId;
@@ -220,17 +221,19 @@ export async function POST(request: Request) {
                             throw new Error(`Cannot find user for subscription ${subscription.id}: ${userError.message}`);
                         }
 
-                        userId = userData.user_id;
-                        console.log(`🔍 Found user ${userId} for subscription ${subscription.id} with current plan ${userData.plan_id}`);
+                        if (userData) {
+                            userId = userData.user_id;
+                            console.log(`🔍 Found user ${userId} for subscription ${subscription.id} with current plan ${userData.plan_id}`);
+                        } else {
+                            throw new Error(`No user data found for subscription ${subscription.id}`);
+                        }
                     }
 
-                    console.log(`Step 2: Calculating next billing date`);
                     const nextBillingDate = new Date(subscription.current_period_end * 1000)
                         .toISOString()
                         .split('T')[0];
                     console.log(`Next billing date: ${nextBillingDate}`);
 
-                    console.log(`Step 3: Getting current subscription data from database`);
                     const { data: currentSub, error: currentSubError } = await adminSupabase
                         .from('user_subscriptions')
                         .select('plan_id, updated_at, status')
@@ -239,8 +242,8 @@ export async function POST(request: Request) {
 
                     if (currentSubError && currentSubError.code !== 'PGRST116') {
                         console.error(`Error fetching current subscription: ${currentSubError.message}`);
-                    } else {
-                        console.log(`Current subscription in database: Plan=${currentSub?.plan_id}, Status=${currentSub?.status}, LastUpdated=${currentSub?.updated_at}`);
+                    } else if (currentSub) {
+                        console.log(`Current subscription in database: Plan=${currentSub.plan_id}, Status=${currentSub.status}`);
                     }
 
                     if (subscription.cancel_at_period_end) {
@@ -266,7 +269,6 @@ export async function POST(request: Request) {
                         return NextResponse.json({ received: true });
                     }
 
-                    console.log(`Step 4: Determining plan ID`);
                     // Get plan info from metadata or items
                     let planId = subscription.metadata?.planId;
                     let planSource = 'subscription metadata';
@@ -276,11 +278,10 @@ export async function POST(request: Request) {
                         (new Date().getTime() - new Date(currentSub.updated_at).getTime() < 5 * 60 * 1000); // 5 minutes
 
                     if (isRecentUpdate) {
-                        console.log(`Recent database update detected (< 5 min ago). Time elapsed: ${Math.round((new Date().getTime() - new Date(currentSub.updated_at).getTime()) / 1000)} seconds`);
+                        console.log(`Recent database update detected (< 5 min ago)`);
                     }
 
                     // Special case: If current plan is Elite and we're in a subscription.updated event
-                    // This is often a downgrade attempt after upgrading - we need to protect it
                     if (isRecentUpdate && currentSub?.plan_id === 'elite') {
                         console.log(`⚠️ Protecting recent Elite plan upgrade from downgrade`);
                         planId = 'elite';
@@ -331,7 +332,7 @@ export async function POST(request: Request) {
                         console.log(`Could not determine plan. Using default: ${planId}`);
                     }
 
-                    console.log(`Step 5: Preparing update data`);
+                    console.log(`Preparing update data`);
                     const updateData = {
                         status: subscription.status,
                         next_billing_date: nextBillingDate,
@@ -340,7 +341,7 @@ export async function POST(request: Request) {
                     };
                     console.log(`Update data:`, updateData);
 
-                    console.log(`Step 6: Executing database update for user ${userId}`);
+                    console.log(`Executing database update for user ${userId}`);
                     const { data, error: updateError } = await adminSupabase
                         .from('user_subscriptions')
                         .update(updateData)
@@ -348,23 +349,22 @@ export async function POST(request: Request) {
                         .select();
 
                     if (updateError) {
-                        console.error(`❌ Error updating subscription: ${updateError.message}`, updateError);
-                        throw updateError;
+                        console.error(`❌ Error updating subscription: ${updateError.message}`);
+                        throw new Error(`Error updating subscription: ${updateError.message}`);
                     } else {
                         console.log(`✅ Successfully updated subscription ${subscription.id} to ${planId} via ${planSource}`);
                         console.log(`Updated data:`, data);
                     }
 
-                } catch (error: unknown) {
+                } catch (error) {
                     // Catch and log any errors in this specific event handler
-                    const subscriptionError = error as Error;
-                    console.error("💥 Error processing subscription update:", subscriptionError.message);
-                    console.error("Stack trace:", subscriptionError.stack);
+                    const errorMsg = error instanceof Error ? error.message : String(error);
+                    console.error("Error processing subscription update:", errorMsg);
                     // Don't throw - respond with 200 to Stripe and handle the error internally
                     return NextResponse.json({
                         received: true,
                         warning: "Error processing subscription, but acknowledging receipt",
-                        error: subscriptionError.message
+                        error: errorMsg
                     });
                 }
                 break;
@@ -374,41 +374,52 @@ export async function POST(request: Request) {
                 const subscription = event.data.object as Stripe.Subscription;
                 console.log(`🔄 Processing customer.subscription.deleted, ID: ${subscription.id}`);
 
-                // Find the user for this subscription
-                const { data: userData, error: userError } = await adminSupabase
-                    .from('user_subscriptions')
-                    .select('user_id')
-                    .eq('stripe_subscription_id', subscription.id)
-                    .single();
+                try {
+                    // Find the user for this subscription
+                    const { data: userData, error: userError } = await adminSupabase
+                        .from('user_subscriptions')
+                        .select('user_id')
+                        .eq('stripe_subscription_id', subscription.id)
+                        .single();
 
-                if (userError && userError.code !== 'PGRST116') {
-                    console.error(`❌ Error finding user for deleted subscription: ${userError.message}`);
-                    return NextResponse.json({ message: userError.message }, { status: 500 });
-                }
+                    if (userError && userError.code !== 'PGRST116') {
+                        console.error(`❌ Error finding user for deleted subscription: ${userError.message}`);
+                        throw new Error(`Error finding user for deleted subscription: ${userError.message}`);
+                    }
 
-                const userId = userData?.user_id;
-                if (!userId) {
-                    console.error(`❌ Cannot find user for subscription ${subscription.id}`);
-                    return NextResponse.json({ message: 'User not found' }, { status: 404 });
-                }
+                    const userId = userData?.user_id;
+                    if (!userId) {
+                        console.error(`❌ Cannot find user for subscription ${subscription.id}`);
+                        return NextResponse.json({
+                            received: true,
+                            message: 'User not found, but acknowledging receipt'
+                        });
+                    }
 
-                // Update the subscription status in the database
-                const { data, error: updateError } = await adminSupabase
-                    .from('user_subscriptions')
-                    .update({
-                        status: 'canceled',
-                        plan_id: 'free', // Downgrade to free plan
-                        updated_at: new Date().toISOString()
-                    })
-                    .eq('user_id', userId)
-                    .select();
+                    // Update the subscription status in the database
+                    const { error: updateError } = await adminSupabase
+                        .from('user_subscriptions')
+                        .update({
+                            status: 'canceled',
+                            plan_id: 'free', // Downgrade to free plan
+                            updated_at: new Date().toISOString()
+                        })
+                        .eq('user_id', userId)
+                        .select();
 
-                if (updateError) {
-                    console.error(`❌ Error marking subscription as canceled: ${updateError.message}`);
-                    return NextResponse.json({ message: updateError.message }, { status: 500 });
-                } else {
-                    console.log(`✅ Successfully marked subscription ${subscription.id} as canceled and downgraded to free`);
-                    console.log(`Updated data:`, data);
+                    if (updateError) {
+                        console.error(`❌ Error marking subscription as canceled: ${updateError.message}`);
+                        throw new Error(`Error marking subscription as canceled: ${updateError.message}`);
+                    } else {
+                        console.log(`✅ Successfully marked subscription ${subscription.id} as canceled and downgraded to free`);
+                    }
+                } catch (error) {
+                    const errorMsg = error instanceof Error ? error.message : String(error);
+                    console.error(`Error processing subscription deletion: ${errorMsg}`);
+                    return NextResponse.json({
+                        received: true,
+                        error: errorMsg
+                    });
                 }
 
                 break;
@@ -427,20 +438,12 @@ export async function POST(request: Request) {
             environment: isProduction ? 'production' : 'test'
         });
 
-    } catch (error: unknown) {
+    } catch (error) {
         const processingTime = Date.now() - startTime;
         console.error(`❌ Webhook error after ${processingTime}ms:`, error);
 
         // Detailed error logging with proper typing
         if (error instanceof Error) {
-            // Create an interface for database errors
-            interface DatabaseError {
-                code?: string;
-                details?: string;
-                hint?: string;
-            }
-
-            // Log standard Error properties
             const errorDetails: Record<string, unknown> = {
                 name: error.name,
                 message: error.message,
@@ -456,13 +459,15 @@ export async function POST(request: Request) {
             console.error('Detailed error information:', errorDetails);
         }
 
+        // Return 200 status code to acknowledge receipt to Stripe
         return NextResponse.json(
             {
-                message: error instanceof Error ? error.message : 'Webhook handler error',
+                received: true,
+                error: error instanceof Error ? error.message : String(error),
                 processingTime,
                 environment: isProduction ? 'production' : 'test'
             },
-            { status: 500 }
+            { status: 200 }
         );
     }
 }

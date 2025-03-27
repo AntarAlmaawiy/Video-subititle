@@ -522,3 +522,4 @@ app.listen(port, () => {
     console.log(`Video processing server running on port ${port}`);
     console.log(`Test the server by visiting http://localhost:${port}/api/test`);
 });
+
