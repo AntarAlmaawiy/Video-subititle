@@ -30,20 +30,6 @@ try {
         '/opt/homebrew/bin/ffmpeg',       // Mac (Homebrew on Apple Silicon)
         'C:\\ffmpeg\\bin\\ffmpeg.exe'     // Windows
     ];
-    // After setting the path
-    if (ffmpegPath) {
-        ffmpeg.setFfmpegPath(ffmpegPath);
-
-        // Verify FFmpeg is accessible
-        exec('ffmpeg -version', (error, stdout) => {
-            if (error) {
-                console.error('Error verifying FFmpeg installation:', error);
-                console.warn('⚠️ FFmpeg might not be properly installed or accessible');
-            } else {
-                console.log('FFmpeg version info:', stdout.split('\n')[0]);
-            }
-        });
-    }
 
     let ffmpegPath = null;
     for (const path of possiblePaths) {
@@ -130,8 +116,19 @@ const upload = multer({
 });
 
 // Enable CORS with specific origins
+const allowedOrigins = ['https://www.sub0-translate.com', 'https://sub0-translate.com'];
+
 app.use(cors({
-    origin: 'https://www.sub0-translate.com',
+    origin: function(origin, callback) {
+        // Allow requests with no origin (like mobile apps or curl requests)
+        if (!origin) return callback(null, true);
+
+        if (allowedOrigins.includes(origin)) {
+            callback(null, origin); // Return ONLY the matching origin
+        } else {
+            callback(new Error('Not allowed by CORS'));
+        }
+    },
     methods: ['GET', 'POST', 'OPTIONS'],
     credentials: true,
     allowedHeaders: ['Content-Type', 'Authorization'],
@@ -148,7 +145,7 @@ app.use((req, res, next) => {
     next();
 });
 
-// Serve temporary files (they'll be cleaned up later)
+// Serve temporary files WITHOUT any additional headers
 app.use('/temp', express.static(tempDir));
 
 // Add a root endpoint for testing
@@ -357,7 +354,6 @@ app.post('/api/process-video', upload.single('video'), async (req, res) => {
             throw new Error('Failed to create subtitle file');
         }
 
-        // Step 6: Embed subtitles with better error reporting
         // Step 6: Embed subtitles with better error reporting
         console.log('Embedding subtitles...');
         try {
