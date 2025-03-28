@@ -68,38 +68,18 @@ export async function POST(request: Request): Promise<NextResponse> {
             }
 
             try {
-                // CRITICAL: Check if the user exists in profiles table
-                console.log(`🔍 Checking if user ${userId} exists in profiles table...`);
+                // SIMPLIFIED: Just verify user exists
+                console.log(`🔍 Verifying user ${userId} exists in profiles table...`);
                 const { error: userCheckError } = await adminSupabase
                     .from('profiles')
                     .select('id')
                     .eq('id', userId)
                     .single();
 
-                // If user doesn't exist, create it
-                if (userCheckError && userCheckError.code === 'PGRST116') {
-                    // PGRST116 means no rows found
-                    console.log(`⚠️ User ${userId} not found in profiles table. Creating user profile...`);
-                    const { data: newUser, error: createError } = await adminSupabase
-                        .from('profiles')
-                        .insert({
-                            id: userId,
-                            created_at: new Date().toISOString(),
-                            updated_at: new Date().toISOString()
-                        })
-                        .select();
-
-                    if (createError) {
-                        console.error('❌ Error creating user profile:', createError);
-                        return NextResponse.json({ message: 'Failed to create user profile' }, { status: 200 });
-                    }
-
-                    console.log('✅ Created user profile:', newUser);
-                } else if (userCheckError) {
+                if (userCheckError && userCheckError.code !== 'PGRST116') {
+                    // Only log non-existence errors, don't try to create
                     console.error('❌ Error checking for user profile:', userCheckError);
                     return NextResponse.json({ message: 'Error checking user profile' }, { status: 200 });
-                } else {
-                    console.log(`✅ User ${userId} exists in profiles table`);
                 }
 
                 // Get subscription details from Stripe
@@ -140,6 +120,22 @@ export async function POST(request: Request): Promise<NextResponse> {
                         details: error.details,
                         hint: error.hint
                     });
+
+                    // Special handling for foreign key constraint violation
+                    if (error.code === '23503') { // Foreign key violation
+                        console.error('❌ This is a foreign key constraint violation. User likely does not exist in the profiles table.');
+
+                        // Try to log detailed information about the user
+                        console.log('🔍 Attempting to get auth user info');
+                        const { data: authUser, error: authError } = await adminSupabase.auth.admin.getUserById(userId);
+
+                        if (authError) {
+                            console.error('❌ Error fetching auth user:', authError);
+                        } else {
+                            console.log('📋 Auth user info:', authUser);
+                        }
+                    }
+
                     return NextResponse.json({ message: 'Database update failed' }, { status: 200 });
                 }
 
@@ -160,97 +156,6 @@ export async function POST(request: Request): Promise<NextResponse> {
             } catch (err) {
                 console.error('❌ Error processing checkout session:', err);
                 return NextResponse.json({ message: 'Error processing checkout' }, { status: 200 });
-            }
-        }
-        // Handle subscription updated event
-        else if (event.type === 'customer.subscription.updated') {
-            const subscription = event.data.object as Stripe.Subscription;
-            console.log(`🔄 Processing customer.subscription.updated, ID: ${subscription.id}`);
-
-            // Check if we can identify the user from this subscription
-            try {
-                // First try to find the user from our database using subscription ID
-                const { data: subData, error: subError } = await adminSupabase
-                    .from('user_subscriptions')
-                    .select('user_id, plan_id')
-                    .eq('stripe_subscription_id', subscription.id)
-                    .single();
-
-                if (subError) {
-                    console.error('❌ Error finding user for subscription:', subError);
-                    return NextResponse.json({ message: 'User not found for subscription' }, { status: 200 });
-                }
-
-                if (!subData || !subData.user_id) {
-                    console.error('❌ No user found for subscription ID:', subscription.id);
-                    return NextResponse.json({ message: 'No user found for subscription' }, { status: 200 });
-                }
-
-                console.log(`📋 Found user ${subData.user_id} for subscription ${subscription.id}`);
-
-                // Determine if subscription is being canceled at period end
-                const status = subscription.cancel_at_period_end ? 'canceled' : subscription.status;
-
-                // Update the subscription in database
-                const { data, error } = await adminSupabase
-                    .from('user_subscriptions')
-                    .update({
-                        status: status,
-                        next_billing_date: new Date(subscription.current_period_end * 1000).toISOString().split('T')[0],
-                        updated_at: new Date().toISOString()
-                    })
-                    .eq('user_id', subData.user_id)
-                    .select();
-
-                if (error) {
-                    console.error('❌ Error updating subscription status:', error);
-                    return NextResponse.json({ message: 'Error updating subscription' }, { status: 200 });
-                }
-
-                console.log('✅ Subscription status updated in database:', data);
-            } catch (err) {
-                console.error('❌ Error processing subscription update:', err);
-                return NextResponse.json({ message: 'Error processing update' }, { status: 200 });
-            }
-        }
-        // Handle subscription deleted event
-        else if (event.type === 'customer.subscription.deleted') {
-            const subscription = event.data.object as Stripe.Subscription;
-            console.log(`🔄 Processing customer.subscription.deleted, ID: ${subscription.id}`);
-
-            try {
-                // Find the user from our database using subscription ID
-                const { data: subData, error: subError } = await adminSupabase
-                    .from('user_subscriptions')
-                    .select('user_id')
-                    .eq('stripe_subscription_id', subscription.id)
-                    .single();
-
-                if (subError) {
-                    console.error('❌ Error finding user for deleted subscription:', subError);
-                    return NextResponse.json({ message: 'User not found for subscription' }, { status: 200 });
-                }
-
-                // Downgrade to free plan
-                const { data, error } = await adminSupabase
-                    .from('user_subscriptions')
-                    .update({
-                        plan_id: 'free',
-                        status: 'canceled',
-                        updated_at: new Date().toISOString()
-                    })
-                    .eq('user_id', subData.user_id)
-                    .select();
-
-                if (error) {
-                    console.error('❌ Error downgrading to free plan:', error);
-                    return NextResponse.json({ message: 'Error downgrading subscription' }, { status: 200 });
-                }
-
-                console.log('✅ User downgraded to free plan:', data);
-            } catch (err) {
-                console.error('❌ Error processing subscription deletion:', err);
-                return NextResponse.json({ message: 'Error processing deletion' }, { status: 200 });
             }
         }
 
