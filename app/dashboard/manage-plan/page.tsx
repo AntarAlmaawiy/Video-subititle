@@ -4,10 +4,57 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { useSession } from "next-auth/react";
 import { supabase, getUserStorageStats, getUserSubscription, canUploadMoreVideos } from '@/lib/supabase';
-import { CheckCircle, XCircle, ArrowRight, Crown, Upload, HardDrive, Loader2, RefreshCw } from 'lucide-react';
-import { toast } from 'react-hot-toast'; // Add this package if you don't have it
+import { CheckCircle, XCircle, ArrowRight, Crown, Upload, HardDrive, Loader2, RefreshCw, AlertTriangle } from 'lucide-react';
+import { toast } from 'react-hot-toast';
 import ConfirmationModal from '@/components/ConfirmationModal';
 
+// TestModeToggle Component
+interface TestModeToggleProps {
+    isTestMode: boolean;
+    setIsTestMode: React.Dispatch<React.SetStateAction<boolean>>;
+}
+
+const TestModeToggle: React.FC<TestModeToggleProps> = ({ isTestMode, setIsTestMode }) => {
+    return (
+        <div className="mb-4 p-3 bg-yellow-100 border border-yellow-300 rounded-md shadow-sm">
+            <div className="flex items-center justify-between">
+                <div className="flex items-center">
+                    <div className="relative inline-block w-10 mr-2 align-middle select-none">
+                        <input
+                            type="checkbox"
+                            name="testMode"
+                            id="testMode"
+                            checked={isTestMode}
+                            onChange={() => setIsTestMode(!isTestMode)}
+                            className="absolute block w-6 h-6 bg-white border-4 rounded-full appearance-none cursor-pointer checked:right-0 checked:border-green-500 focus:outline-none duration-200"
+                        />
+                        <label
+                            htmlFor="testMode"
+                            className={`block h-6 overflow-hidden rounded-full cursor-pointer ${
+                                isTestMode ? 'bg-green-400' : 'bg-gray-300'
+                            }`}
+                        ></label>
+                    </div>
+                    <span className="font-medium text-gray-700">
+            {isTestMode ? 'Test Mode ON' : 'Test Mode OFF'}
+          </span>
+                </div>
+                <div className="text-xs text-gray-500">
+                    {isTestMode
+                        ? 'Using Stripe test environment - no real charges will be made'
+                        : 'Using production environment - real charges will be made'}
+                </div>
+            </div>
+
+            {isTestMode && (
+                <div className="mt-2 text-sm">
+                    <p className="font-medium">Test card: 4242 4242 4242 4242</p>
+                    <p>Any future date, any 3 digits for CVC, any postal code</p>
+                </div>
+            )}
+        </div>
+    );
+};
 // Plan types
 interface PlanFeature {
     name: string;
@@ -50,6 +97,7 @@ export default function ManagePlanPage() {
     const [error, setError] = useState<string | null>(null);
     const [processingPayment, setProcessingPayment] = useState(false);
     const [loadAttempted, setLoadAttempted] = useState(false);
+    const [isTestMode, setIsTestMode] = useState(false);
 
     // Modal states
     const [showCancelModal, setShowCancelModal] = useState(false);
@@ -277,9 +325,9 @@ export default function ManagePlanPage() {
             setLoading(false);
             setRefreshing(false);
         }
-    }, [session?.user?.id, status, plans, loading]);  // Removed refreshSubscription from dependencies
+    }, [session?.user?.id, status, plans, loading]);
 
-    // Improved refreshSubscription function with retry logic - Defined early to avoid dependency issues
+    // Improved refreshSubscription function with retry logic
     const refreshSubscription = useCallback(async () => {
         setRefreshing(true);
         let retryCount = 0;
@@ -322,7 +370,7 @@ export default function ManagePlanPage() {
                 const { data: directSubscriptionData, error: subError } = await supabase
                     .from('user_subscriptions')
                     .select('*, subscription_plans(*)')
-                    .eq('user_id', session.user.id)  // Now guaranteed to be defined
+                    .eq('user_id', session.user.id)
                     .single();
 
                 if (subError && subError.code !== 'PGRST116') {
@@ -373,7 +421,7 @@ export default function ManagePlanPage() {
         };
 
         return attemptRefresh();
-    }, [session?.user?.id, fetchUserData]); // Added fetchUserData to dependencies
+    }, [session?.user?.id, fetchUserData]);
 
     // Check if returning from Stripe
     useEffect(() => {
@@ -385,6 +433,12 @@ export default function ManagePlanPage() {
                 // Check if we have session before proceeding
                 if (status === "authenticated" && session?.user?.id) {
                     toast.success('Payment successful! Your subscription is being updated...');
+
+                    // Get test mode from localStorage
+                    const wasTestMode = localStorage.getItem('checkoutTestMode') === 'true';
+                    if (wasTestMode) {
+                        console.log('This was a test mode checkout');
+                    }
 
                     // Force a direct refresh from the database
                     const checkSubscription = async () => {
@@ -444,6 +498,7 @@ export default function ManagePlanPage() {
                         if (success) {
                             localStorage.removeItem('pendingCheckout');
                             localStorage.removeItem('checkoutTime');
+                            localStorage.removeItem('checkoutTestMode');
 
                             toast.success('Subscription updated successfully', {
                                 id: 'checking-subscription'
@@ -458,10 +513,11 @@ export default function ManagePlanPage() {
                     // Clean up old data
                     localStorage.removeItem('pendingCheckout');
                     localStorage.removeItem('checkoutTime');
+                    localStorage.removeItem('checkoutTestMode');
                 }
             }
         }
-    }, [session?.user?.id, status, refreshSubscription]); // Removed unnecessary refreshSubscription dependency
+    }, [session?.user?.id, status, refreshSubscription]);
 
     // Check on component mount
     useEffect(() => {
@@ -488,7 +544,6 @@ export default function ManagePlanPage() {
 
     // Handle checkout with Stripe
     const handleUpgrade = async (planId: string) => {
-        // In your handleUpgrade function
         if (!session?.user?.id) {
             router.push('/signin');
             return;
@@ -508,6 +563,7 @@ export default function ManagePlanPage() {
                 body: JSON.stringify({
                     planId: planId,
                     billingCycle: activeTab,
+                    testMode: isTestMode, // Add the test mode flag
                 }),
             });
 
@@ -521,6 +577,7 @@ export default function ManagePlanPage() {
             // Store checkout info in localStorage for verification on return
             localStorage.setItem('pendingCheckout', 'true');
             localStorage.setItem('checkoutTime', Date.now().toString());
+            localStorage.setItem('checkoutTestMode', isTestMode ? 'true' : 'false'); // Store test mode state
 
             // Redirect to Stripe Checkout
             window.location.href = sessionUrl;
@@ -555,6 +612,9 @@ export default function ManagePlanPage() {
                 headers: {
                     'Content-Type': 'application/json',
                 },
+                body: JSON.stringify({
+                    testMode: isTestMode, // Include test mode flag
+                }),
             });
 
             // First log the raw response for debugging
@@ -609,6 +669,9 @@ export default function ManagePlanPage() {
                 headers: {
                     'Content-Type': 'application/json',
                 },
+                body: JSON.stringify({
+                    testMode: isTestMode, // Include test mode flag
+                }),
             });
 
             const data = await response.json();
@@ -654,6 +717,26 @@ export default function ManagePlanPage() {
             <div className="pt-20 pb-16 px-4">
                 <h1 className="text-center text-4xl font-bold mb-2">Manage Your Plan</h1>
                 <p className="text-center text-gray-600 mb-8">Choose the perfect plan for your subtitle translation needs</p>
+
+                {/* Test Mode Toggle - Add this near the top */}
+                <div className="max-w-4xl mx-auto mb-6">
+                    <TestModeToggle isTestMode={isTestMode} setIsTestMode={setIsTestMode} />
+                </div>
+
+                {/* Test Mode Warning */}
+                {isTestMode && (
+                    <div className="max-w-4xl mx-auto mb-6">
+                        <div className="bg-yellow-100 border-l-4 border-yellow-500 text-yellow-700 p-4 rounded flex items-start">
+                            <AlertTriangle className="h-5 w-5 text-yellow-500 mr-3 mt-0.5 flex-shrink-0" />
+                            <div>
+                                <p className="font-medium">Test mode is active</p>
+                                <p className="text-sm mt-1">
+                                    No actual charges will be made. Use test card 4242 4242 4242 4242 with any future expiration date and any 3-digit CVC.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                )}
 
                 {error && (
                     <div className="max-w-4xl mx-auto bg-red-50 p-4 rounded-md mb-6 text-red-600">

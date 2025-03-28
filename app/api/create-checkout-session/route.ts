@@ -1,12 +1,8 @@
+// app/api/create-checkout-session/route.ts
 import { NextResponse } from 'next/server';
 import Stripe from 'stripe';
 import { auth } from "@/app/api/auth/[...nextauth]/route";
 import { adminSupabase } from '@/lib/admin-supabase'; // Import the admin client
-
-// Initialize Stripe
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || '', {
-    apiVersion: '2025-02-24.acacia',
-});
 
 // Define interface for plan types
 interface Plan {
@@ -38,7 +34,7 @@ export async function POST(request: Request) {
 
         // Parse request body
         const body = await request.json();
-        const { planId, billingCycle } = body;
+        const { planId, billingCycle, testMode = false } = body;
 
         if (!planId) {
             return NextResponse.json(
@@ -47,7 +43,16 @@ export async function POST(request: Request) {
             );
         }
 
-        console.log(`Creating checkout session for user ${session.user.id}, plan: ${planId}, cycle: ${billingCycle}`);
+        // Initialize Stripe with the appropriate key based on test mode
+        const stripeSecretKey = testMode
+            ? process.env.STRIPE_TEST_SECRET_KEY
+            : process.env.STRIPE_SECRET_KEY;
+
+        const stripe = new Stripe(stripeSecretKey || '', {
+            apiVersion: '2025-02-24.acacia',
+        });
+
+        console.log(`Creating ${testMode ? 'TEST' : 'PRODUCTION'} checkout session for user ${session.user.id}, plan: ${planId}, cycle: ${billingCycle}`);
 
         // Define pricing plans
         const plans: Record<string, Plan> = {
@@ -215,7 +220,7 @@ export async function POST(request: Request) {
                     price_data: {
                         currency: 'usd',
                         product_data: {
-                            name: selectedPlan.name,
+                            name: `${selectedPlan.name}${testMode ? ' (TEST)' : ''}`,
                             description: `${billingCycle === 'yearly' ? 'Annual' : 'Monthly'} subscription`,
                         },
                         unit_amount: unitAmount,
@@ -232,7 +237,8 @@ export async function POST(request: Request) {
             metadata: {
                 userId: session.user.id,
                 planId: planId,
-                billingCycle: billingCycle
+                billingCycle: billingCycle,
+                testMode: testMode ? 'true' : 'false'
             },
         };
 
@@ -246,7 +252,7 @@ export async function POST(request: Request) {
         // Create Stripe Checkout Session with typed params
         const checkoutSession = await stripe.checkout.sessions.create(params);
 
-        console.log(`✅ Created checkout session ${checkoutSession.id} for user ${session.user.id}, plan ${planId}`);
+        console.log(`✅ Created ${testMode ? 'TEST' : 'PRODUCTION'} checkout session ${checkoutSession.id} for user ${session.user.id}, plan ${planId}`);
 
         return NextResponse.json({ sessionUrl: checkoutSession.url });
     } catch (error: unknown) {
