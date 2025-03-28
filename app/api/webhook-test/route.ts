@@ -16,7 +16,7 @@ const stripe = new Stripe(stripeTestSecretKey, {
 
 export async function POST(request: Request): Promise<NextResponse> {
     try {
-        console.log(`🔔 Test Webhook received at:`, new Date().toISOString());
+        console.log(`🔔 TEST Webhook received at:`, new Date().toISOString());
 
         const body = await request.text();
         const signature = request.headers.get('stripe-signature') || '';
@@ -34,7 +34,7 @@ export async function POST(request: Request): Promise<NextResponse> {
         try {
             event = stripe.webhooks.constructEvent(body, signature, stripeTestWebhookSecret);
             console.log(`✅ Test webhook signature verified. Event type: ${event.type}`);
-        } catch (err: unknown) {
+        } catch (err) {
             console.error(`❌ Test webhook signature verification failed:`, err);
             return NextResponse.json(
                 {message: `Test webhook signature verification failed`},
@@ -44,20 +44,15 @@ export async function POST(request: Request): Promise<NextResponse> {
 
         const adminSupabase = getAdminSupabase();
 
-        // Print the entire event for debugging
-        console.log('FULL EVENT:', JSON.stringify(event, null, 2));
-
-        // Handle checkout.session.completed event for new subscriptions
         if (event.type === 'checkout.session.completed') {
             const session = event.data.object as Stripe.Checkout.Session;
-            console.log(`🔄 Processing checkout.session.completed (TEST), ID: ${session.id}`);
+            console.log(`🔄 Processing TEST checkout.session.completed, ID: ${session.id}`);
+            console.log(`📋 Session metadata:`, session.metadata);
 
             // Extract userId and planId from metadata
             const userId = session.metadata?.userId;
             const planId = session.metadata?.planId;
             const billingCycle = session.metadata?.billingCycle as 'monthly' | 'yearly' || 'monthly';
-
-            console.log(`User ID: ${userId}, Plan ID: ${planId}, Billing Cycle: ${billingCycle}`);
 
             if (!userId || !planId) {
                 console.error('❌ Missing metadata in checkout session:', session.metadata);
@@ -69,134 +64,95 @@ export async function POST(request: Request): Promise<NextResponse> {
                 return NextResponse.json({ message: 'No subscription ID' }, { status: 400 });
             }
 
+            // Log the subscription ID
             const subscriptionId = String(session.subscription);
+            console.log(`🔑 Subscription ID: ${subscriptionId}`);
+
+            // Log the customer ID
             const customerId = String(session.customer);
-            console.log(`🔑 Subscription ID: ${subscriptionId}, Customer ID: ${customerId}`);
+            console.log(`👤 Customer ID: ${customerId}`);
 
-            try {
-                // Get subscription details from Stripe
-                const subscription = await stripe.subscriptions.retrieve(subscriptionId);
-                console.log(`📄 Subscription status: ${subscription.status}`);
+            // Retrieve the subscription details from Stripe
+            const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+            console.log(`📄 Subscription status: ${subscription.status}`);
 
-                // Set the next billing date
-                const nextBillingDate = new Date(subscription.current_period_end * 1000)
-                    .toISOString()
-                    .split('T')[0];
-                console.log(`📅 Next billing date: ${nextBillingDate}`);
+            const nextBillingDate = new Date(subscription.current_period_end * 1000)
+                .toISOString()
+                .split('T')[0];
+            console.log(`📅 Next billing date: ${nextBillingDate}`);
 
-                // CRITICAL FIX: Use raw SQL for direct database update
-                // This bypasses any potential RLS issues or other constraints
-                console.log('🔧 Attempting direct SQL update for plan change');
+            // Prepare the subscription data for database
+            const subscriptionData = {
+                user_id: userId,
+                plan_id: planId,
+                status: subscription.status,
+                billing_cycle: billingCycle,
+                next_billing_date: nextBillingDate,
+                stripe_subscription_id: subscriptionId,
+                stripe_customer_id: customerId,
+                updated_at: new Date().toISOString()
+            };
 
-                const rawSql = `
-                    DO $$
-                    BEGIN
-                        -- First try to update existing subscription
-                        UPDATE public.user_subscriptions 
-                        SET 
-                            plan_id = '${planId}',
-                            status = '${subscription.status}',
-                            billing_cycle = '${billingCycle}',
-                            next_billing_date = '${nextBillingDate}',
-                            stripe_subscription_id = '${subscriptionId}',
-                            stripe_customer_id = '${customerId}',
-                            updated_at = NOW()
-                        WHERE user_id = '${userId}';
-                        
-                        -- If no rows were updated, insert a new record
-                        IF NOT FOUND THEN
-                            INSERT INTO public.user_subscriptions (
-                                user_id, 
-                                plan_id, 
-                                status, 
-                                billing_cycle, 
-                                next_billing_date, 
-                                stripe_subscription_id, 
-                                stripe_customer_id, 
-                                created_at, 
-                                updated_at
-                            ) VALUES (
-                                '${userId}', 
-                                '${planId}', 
-                                '${subscription.status}', 
-                                '${billingCycle}', 
-                                '${nextBillingDate}', 
-                                '${subscriptionId}', 
-                                '${customerId}', 
-                                NOW(), 
-                                NOW()
-                            );
-                        END IF;
-                    END $$;
-                `;
+            console.log(`💾 Preparing to save subscription data:`, subscriptionData);
 
-                console.log('Executing SQL:', rawSql);
+            // Check if user already has a subscription
+            const { data: existingSubscription, error: fetchError } = await adminSupabase
+                .from('user_subscriptions')
+                .select('*')
+                .eq('user_id', userId)
+                .single();
 
-                // Execute raw SQL
-                const { error: sqlError } = await adminSupabase.rpc('exec_sql', { sql: rawSql });
+            let result;
 
-                if (sqlError) {
-                    console.error('❌ SQL execution error:', sqlError);
+            if (existingSubscription) {
+                console.log(`🔄 Updating existing subscription for user ${userId}`);
 
-                    // Fall back to individual update/insert
-                    console.log('Falling back to standard update/insert');
+                // Before update - log what we're updating from
+                console.log(`Before update: ${JSON.stringify({
+                    old_plan_id: existingSubscription.plan_id,
+                    old_status: existingSubscription.status,
+                    old_stripe_subscription_id: existingSubscription.stripe_subscription_id,
+                    old_stripe_customer_id: existingSubscription.stripe_customer_id
+                })}`);
 
-                    // Check if user subscription exists
-                    const { data: existingData, error: checkError } = await adminSupabase
-                        .from('user_subscriptions')
-                        .select('id')
-                        .eq('user_id', userId)
-                        .maybeSingle();
+                // Update with the full subscription data
+                const { data, error: updateError } = await adminSupabase
+                    .from('user_subscriptions')
+                    .update(subscriptionData)
+                    .eq('user_id', userId)
+                    .select();
 
-                    if (checkError) {
-                        console.error('Error checking for existing subscription:', checkError);
-                    }
-
-                    if (existingData) {
-                        // Update existing record
-                        console.log('Updating existing subscription');
-                        const { error: updateError } = await adminSupabase
-                            .from('user_subscriptions')
-                            .update({
-                                plan_id: planId,
-                                status: subscription.status,
-                                billing_cycle: billingCycle,
-                                next_billing_date: nextBillingDate,
-                                stripe_subscription_id: subscriptionId,
-                                stripe_customer_id: customerId,
-                                updated_at: new Date().toISOString()
-                            })
-                            .eq('user_id', userId);
-
-                        if (updateError) {
-                            console.error('Update error:', updateError);
-                            throw new Error(`Failed to update subscription: ${updateError.message}`);
-                        }
-                    } else {
-                        // Insert new record
-                        console.log('Creating new subscription');
-                        const { error: insertError } = await adminSupabase
-                            .from('user_subscriptions')
-                            .insert({
-                                user_id: userId,
-                                plan_id: planId,
-                                status: subscription.status,
-                                billing_cycle: billingCycle,
-                                next_billing_date: nextBillingDate,
-                                stripe_subscription_id: subscriptionId,
-                                stripe_customer_id: customerId,
-                                created_at: new Date().toISOString(),
-                                updated_at: new Date().toISOString()
-                            });
-
-                        if (insertError) {
-                            console.error('Insert error:', insertError);
-                            throw new Error(`Failed to create subscription: ${insertError.message}`);
-                        }
-                    }
+                if (updateError) {
+                    console.error(`❌ Error updating subscription: ${updateError.message}`);
+                    return NextResponse.json({ message: updateError.message }, { status: 500 });
                 }
+                result = data;
 
-                // VERIFICATION STEP: Confirm the subscription was updated correctly
+                // After update - verification
+                console.log(`After update: ${JSON.stringify(data)}`);
+            } else {
+                console.log(`➕ Creating new subscription for user ${userId}`);
+                const { data, error: insertError } = await adminSupabase
+                    .from('user_subscriptions')
+                    .insert({
+                        ...subscriptionData,
+                        created_at: new Date().toISOString()
+                    })
+                    .select();
+
+                if (insertError) {
+                    console.error(`❌ Error inserting subscription: ${insertError.message}`);
+                    return NextResponse.json({ message: insertError.message }, { status: 500 });
+                }
+                result = data;
+            }
+
+            // Verify the result
+            if (result && result.length > 0) {
+                console.log(`✅ Subscription successfully saved for user ${userId}, plan ${planId}`);
+                console.log(`Result: ${JSON.stringify(result)}`);
+
+                // Double-check by fetching again
                 const { data: verifyData, error: verifyError } = await adminSupabase
                     .from('user_subscriptions')
                     .select('*')
@@ -204,44 +160,19 @@ export async function POST(request: Request): Promise<NextResponse> {
                     .single();
 
                 if (verifyError) {
-                    console.error('❌ Verification error:', verifyError);
+                    console.error(`❌ Error verifying update: ${verifyError.message}`);
                 } else {
-                    console.log('✅ Verification data:', verifyData);
-
-                    if (verifyData.plan_id !== planId) {
-                        console.error(`⚠️ CRITICAL ERROR: Plan not updated correctly. Expected ${planId}, got ${verifyData.plan_id}`);
-                    } else {
-                        console.log(`✅ SUCCESS: Plan correctly updated to ${planId}`);
-                    }
+                    console.log(`✅ Verification - database now has:`, verifyData);
                 }
-
-                return NextResponse.json({
-                    success: true,
-                    message: `Plan updated to ${planId}`
-                });
-            } catch (error) {
-                console.error('❌ Error processing checkout session:', error);
-                return NextResponse.json({
-                    received: true,
-                    error: error instanceof Error ? error.message : 'Unknown error processing checkout'
-                });
+            } else {
+                console.error(`⚠️ No error, but no result returned when saving subscription`);
             }
         }
 
-        // Handle other events with acknowledgment
-        console.log(`Event ${event.type} received but not specifically handled`);
         return NextResponse.json({ received: true });
-
     } catch (error) {
-        console.error(`❌ Webhook error:`, error);
-
+        console.error('❌ TEST Webhook error:', error);
         // Return 200 status code to acknowledge receipt to Stripe
-        return NextResponse.json(
-            {
-                received: true,
-                error: error instanceof Error ? error.message : String(error)
-            },
-            { status: 200 } // Use 200 even for errors to acknowledge receipt
-        );
+        return NextResponse.json({ received: true }, { status: 200 });
     }
 }
