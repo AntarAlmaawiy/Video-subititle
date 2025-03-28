@@ -99,7 +99,7 @@ interface UserSubscription {
 export default function ManagePlanPage() {
     const router = useRouter()
     const { data: session, status } = useSession()
-    const [selectedPlan, setSelectedPlansetSelectedPlan] = useState<string | null>(null)
+    const [selectedPlan, setSelectedPlan] = useState<string | null>(null)
     const [activeTab, setActiveTab] = useState<"monthly" | "yearly">("monthly")
     const [loading, setLoading] = useState(true)
     const [refreshing, setRefreshing] = useState(false)
@@ -564,7 +564,7 @@ export default function ManagePlanPage() {
             return
         }
 
-        setSelectedPlansetSelectedPlan(planId)
+        setSelectedPlan(planId)
         setProcessingPayment(true)
         setError(null)
 

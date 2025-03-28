@@ -15,7 +15,8 @@ export default async function DashboardPage() {
             <div className="bg-white p-8 rounded-lg shadow">
                 <h1 className="text-2xl font-bold text-gray-900 mb-4">Dashboard</h1>
                 <p className="text-gray-600">
-                    Welcome back, {session?.user?.name || "User"}! This is your personal dashboard.
+                    Welcome back, {session?.user?.name || "User"}! This is your personal dashboard. The website is still in development hence some
+                    features are not available currently.
                 </p>
             </div>
 

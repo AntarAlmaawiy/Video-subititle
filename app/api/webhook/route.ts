@@ -1,186 +1,65 @@
-// app/api/webhook/route.ts - FIXED VERSION
+// app/api/webhook-test/route.ts - ULTRA SIMPLE VERSION
 import { NextResponse } from 'next/server';
 import Stripe from 'stripe';
-import { getAdminSupabase } from '@/lib/admin-supabase';
 
-// Force dynamic API route to ensure it's never cached
+// Force dynamic API route
 export const dynamic = 'force-dynamic';
 
-// Initialize Stripe with correct mode detection
-const stripeSecretKey = process.env.STRIPE_SECRET_KEY || '';
-const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+// Use test key for this endpoint
+const stripeTestSecretKey = process.env.STRIPE_TEST_SECRET_KEY || '';
+const stripeTestWebhookSecret = process.env.STRIPE_TEST_WEBHOOK_SECRET || '';
 
-const stripe = new Stripe(stripeSecretKey, {
+const stripe = new Stripe(stripeTestSecretKey, {
     apiVersion: '2025-02-24.acacia',
 });
 
 export async function POST(request: Request): Promise<NextResponse> {
     try {
-        console.log(`🔔 Webhook received at:`, new Date().toISOString());
+        console.log(`🔔 TEST Webhook received at:`, new Date().toISOString());
 
         const body = await request.text();
         const signature = request.headers.get('stripe-signature') || '';
 
-        if (!webhookSecret) {
-            console.error('❌ Missing STRIPE_WEBHOOK_SECRET environment variable');
-            return NextResponse.json(
-                { message: 'Webhook secret is not configured' },
-                { status: 500 }
-            );
+        if (!stripeTestWebhookSecret) {
+            console.error('❌ Missing STRIPE_TEST_WEBHOOK_SECRET environment variable');
+            return NextResponse.json({ message: 'Test webhook secret is not configured' }, { status: 200 });
         }
 
         let event: Stripe.Event;
 
         try {
-            event = stripe.webhooks.constructEvent(body, signature, webhookSecret);
-            console.log(`✅ Webhook signature verified. Event type: ${event.type}`);
-        } catch (err: unknown) {
-            console.error(`❌ Webhook signature verification failed:`, err);
-            return NextResponse.json(
-                {message: `Webhook signature verification failed`},
-                { status: 400 }
-            );
+            event = stripe.webhooks.constructEvent(body, signature, stripeTestWebhookSecret);
+            console.log(`✅ Test webhook signature verified. Event type: ${event.type}`);
+        } catch (err) {
+            console.error(`❌ Test webhook signature verification failed:`, err);
+            return NextResponse.json({ message: `Test webhook signature verification failed` }, { status: 200 });
         }
 
-        const adminSupabase = getAdminSupabase();
+        // Just log the event and return success - don't try to update the database yet
+        console.log(`📋 Event received: ${event.type}`);
+        console.log(`📋 Event data:`, JSON.stringify(event.data.object, null, 2));
 
-        // Handle checkout.session.completed event for new subscriptions
+        // If this is a checkout session completed event, log the metadata
         if (event.type === 'checkout.session.completed') {
             const session = event.data.object as Stripe.Checkout.Session;
-            console.log(`🔄 Processing checkout.session.completed, ID: ${session.id}`);
+            console.log(`🔄 Processing TEST checkout.session.completed, ID: ${session.id}`);
+            console.log(`📋 Session metadata:`, session.metadata);
 
-            // Extract userId and planId from metadata
+            // Extract and log important information but don't update database yet
             const userId = session.metadata?.userId;
             const planId = session.metadata?.planId;
-            const billingCycle = session.metadata?.billingCycle as 'monthly' | 'yearly' || 'monthly';
+            const subscriptionId = session.subscription ? String(session.subscription) : 'none';
+            const customerId = session.customer ? String(session.customer) : 'none';
 
-            console.log(`User ID: ${userId}, Plan ID: ${planId}, Billing Cycle: ${billingCycle}`);
-
-            if (!userId || !planId) {
-                console.error('❌ Missing metadata in checkout session:', session.metadata);
-                return NextResponse.json({ message: 'Missing metadata' }, { status: 400 });
-            }
-
-            if (!session.subscription) {
-                console.error('❌ No subscription ID in session');
-                return NextResponse.json({ message: 'No subscription ID' }, { status: 400 });
-            }
-
-            const subscriptionId = String(session.subscription);
-            const customerId = String(session.customer);
-            console.log(`🔑 Subscription ID: ${subscriptionId}, Customer ID: ${customerId}`);
-
-            try {
-                // Get subscription details from Stripe
-                const subscription = await stripe.subscriptions.retrieve(subscriptionId);
-                console.log(`📄 Subscription status: ${subscription.status}`);
-
-                // Set the next billing date
-                const nextBillingDate = new Date(subscription.current_period_end * 1000)
-                    .toISOString()
-                    .split('T')[0];
-                console.log(`📅 Next billing date: ${nextBillingDate}`);
-
-                // SIMPLIFIED APPROACH: First check if the user subscription already exists
-                const { data: existingData, error: checkError } = await adminSupabase
-                    .from('user_subscriptions')
-                    .select('id')
-                    .eq('user_id', userId)
-                    .maybeSingle();
-
-                if (checkError) {
-                    console.error('Error checking for existing subscription:', checkError);
-                }
-
-                if (existingData) {
-                    // Update existing record - simple update without complex SQL
-                    console.log('Updating existing subscription');
-                    const { error: updateError } = await adminSupabase
-                        .from('user_subscriptions')
-                        .update({
-                            plan_id: planId,
-                            status: subscription.status,
-                            billing_cycle: billingCycle,
-                            next_billing_date: nextBillingDate,
-                            stripe_subscription_id: subscriptionId,
-                            stripe_customer_id: customerId,
-                            updated_at: new Date().toISOString()
-                        })
-                        .eq('user_id', userId);
-
-                    if (updateError) {
-                        console.error('Update error:', updateError);
-                        throw new Error(`Failed to update subscription: ${updateError.message}`);
-                    }
-                } else {
-                    // Insert new record - simple insert without complex SQL
-                    console.log('Creating new subscription');
-                    const { error: insertError } = await adminSupabase
-                        .from('user_subscriptions')
-                        .insert({
-                            user_id: userId,
-                            plan_id: planId,
-                            status: subscription.status,
-                            billing_cycle: billingCycle,
-                            next_billing_date: nextBillingDate,
-                            stripe_subscription_id: subscriptionId,
-                            stripe_customer_id: customerId,
-                            created_at: new Date().toISOString(),
-                            updated_at: new Date().toISOString()
-                        });
-
-                    if (insertError) {
-                        console.error('Insert error:', insertError);
-                        throw new Error(`Failed to create subscription: ${insertError.message}`);
-                    }
-                }
-
-                // VERIFICATION STEP: Confirm the subscription was updated correctly
-                const { data: verifyData, error: verifyError } = await adminSupabase
-                    .from('user_subscriptions')
-                    .select('*')
-                    .eq('user_id', userId)
-                    .single();
-
-                if (verifyError) {
-                    console.error('❌ Verification error:', verifyError);
-                } else {
-                    console.log('✅ Verification data:', verifyData);
-
-                    if (verifyData.plan_id !== planId) {
-                        console.error(`⚠️ CRITICAL ERROR: Plan not updated correctly. Expected ${planId}, got ${verifyData.plan_id}`);
-                    } else {
-                        console.log(`✅ SUCCESS: Plan correctly updated to ${planId}`);
-                    }
-                }
-
-                return NextResponse.json({
-                    success: true,
-                    message: `Plan updated to ${planId}`
-                });
-            } catch (error) {
-                console.error('❌ Error processing checkout session:', error);
-                return NextResponse.json({
-                    received: true,
-                    error: error instanceof Error ? error.message : 'Unknown error processing checkout'
-                });
-            }
+            console.log(`User ID: ${userId}, Plan ID: ${planId}`);
+            console.log(`Subscription ID: ${subscriptionId}, Customer ID: ${customerId}`);
         }
 
-        // Handle other events with acknowledgment
-        console.log(`Event ${event.type} received but not specifically handled`);
-        return NextResponse.json({ received: true });
-
+        // Always return 200 OK to acknowledge receipt
+        return NextResponse.json({ received: true, success: true });
     } catch (error) {
-        console.error(`❌ Webhook error:`, error);
-
+        console.error('❌ TEST Webhook error:', error);
         // Return 200 status code to acknowledge receipt to Stripe
-        return NextResponse.json(
-            {
-                received: true,
-                error: error instanceof Error ? error.message : String(error)
-            },
-            { status: 200 } // Use 200 even for errors to acknowledge receipt
-        );
+        return NextResponse.json({ received: true, error: String(error) }, { status: 200 });
     }
 }

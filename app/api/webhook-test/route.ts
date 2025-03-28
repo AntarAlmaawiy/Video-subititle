@@ -1,7 +1,6 @@
-// app/api/webhook-test/route.ts - FIXED VERSION
+// app/api/webhook-test/route.ts - ULTRA SIMPLE VERSION
 import { NextResponse } from 'next/server';
 import Stripe from 'stripe';
-import { getAdminSupabase } from '@/lib/admin-supabase';
 
 // Force dynamic API route
 export const dynamic = 'force-dynamic';
@@ -23,10 +22,7 @@ export async function POST(request: Request): Promise<NextResponse> {
 
         if (!stripeTestWebhookSecret) {
             console.error('❌ Missing STRIPE_TEST_WEBHOOK_SECRET environment variable');
-            return NextResponse.json(
-                { message: 'Test webhook secret is not configured' },
-                { status: 500 }
-            );
+            return NextResponse.json({ message: 'Test webhook secret is not configured' }, { status: 200 });
         }
 
         let event: Stripe.Event;
@@ -36,156 +32,34 @@ export async function POST(request: Request): Promise<NextResponse> {
             console.log(`✅ Test webhook signature verified. Event type: ${event.type}`);
         } catch (err) {
             console.error(`❌ Test webhook signature verification failed:`, err);
-            return NextResponse.json(
-                {message: `Test webhook signature verification failed`},
-                { status: 400 }
-            );
+            return NextResponse.json({ message: `Test webhook signature verification failed` }, { status: 200 });
         }
 
-        const adminSupabase = getAdminSupabase();
+        // Just log the event and return success - don't try to update the database yet
+        console.log(`📋 Event received: ${event.type}`);
+        console.log(`📋 Event data:`, JSON.stringify(event.data.object, null, 2));
 
+        // If this is a checkout session completed event, log the metadata
         if (event.type === 'checkout.session.completed') {
             const session = event.data.object as Stripe.Checkout.Session;
             console.log(`🔄 Processing TEST checkout.session.completed, ID: ${session.id}`);
             console.log(`📋 Session metadata:`, session.metadata);
 
-            // Extract userId and planId from metadata
+            // Extract and log important information but don't update database yet
             const userId = session.metadata?.userId;
             const planId = session.metadata?.planId;
-            const billingCycle = session.metadata?.billingCycle as 'monthly' | 'yearly' || 'monthly';
+            const subscriptionId = session.subscription ? String(session.subscription) : 'none';
+            const customerId = session.customer ? String(session.customer) : 'none';
 
-            if (!userId || !planId) {
-                console.error('❌ Missing metadata in checkout session:', session.metadata);
-                return NextResponse.json({ message: 'Missing metadata' }, { status: 400 });
-            }
-
-            if (!session.subscription) {
-                console.error('❌ No subscription ID in session');
-                return NextResponse.json({ message: 'No subscription ID' }, { status: 400 });
-            }
-
-            // Log the subscription ID
-            const subscriptionId = String(session.subscription);
-            console.log(`🔑 Subscription ID: ${subscriptionId}`);
-
-            // Log the customer ID
-            const customerId = String(session.customer);
-            console.log(`👤 Customer ID: ${customerId}`);
-
-            // Retrieve the subscription details from Stripe
-            const subscription = await stripe.subscriptions.retrieve(subscriptionId);
-            console.log(`📄 Subscription status: ${subscription.status}`);
-
-            const nextBillingDate = new Date(subscription.current_period_end * 1000)
-                .toISOString()
-                .split('T')[0];
-            console.log(`📅 Next billing date: ${nextBillingDate}`);
-
-            // Prepare the subscription data for database
-            const subscriptionData = {
-                user_id: userId,
-                plan_id: planId,
-                status: subscription.status,
-                billing_cycle: billingCycle,
-                next_billing_date: nextBillingDate,
-                stripe_subscription_id: subscriptionId,
-                stripe_customer_id: customerId,
-                updated_at: new Date().toISOString()
-            };
-
-            console.log(`💾 Preparing to save subscription data:`, subscriptionData);
-
-            // Check if user already has a subscription
-            const { data: existingSubscription, error: checkError } = await adminSupabase
-                .from('user_subscriptions')
-                .select('*')
-                .eq('user_id', userId)
-                .maybeSingle();
-
-            if (checkError) {
-                console.error('Error checking for existing subscription:', checkError);
-            }
-
-            try {
-                if (existingSubscription) {
-                    console.log(`🔄 Updating existing subscription for user ${userId}`);
-
-                    // Before update - log what we're updating from
-                    console.log(`Before update: ${JSON.stringify({
-                        old_plan_id: existingSubscription.plan_id,
-                        old_status: existingSubscription.status,
-                        old_stripe_subscription_id: existingSubscription.stripe_subscription_id,
-                        old_stripe_customer_id: existingSubscription.stripe_customer_id
-                    })}`);
-
-                    // Update with the full subscription data
-                    const { data, error: updateError } = await adminSupabase
-                        .from('user_subscriptions')
-                        .update(subscriptionData)
-                        .eq('user_id', userId)
-                        .select();
-
-                    if (updateError) {
-                        console.error(`❌ Error updating subscription: ${updateError.message}`);
-                        return NextResponse.json({ message: updateError.message }, { status: 500 });
-                    }
-
-                    console.log(`After update: ${JSON.stringify(data)}`);
-
-                } else {
-                    console.log(`➕ Creating new subscription for user ${userId}`);
-                    const { data, error: insertError } = await adminSupabase
-                        .from('user_subscriptions')
-                        .insert({
-                            ...subscriptionData,
-                            created_at: new Date().toISOString()
-                        })
-                        .select();
-
-                    if (insertError) {
-                        console.error(`❌ Error inserting subscription: ${insertError.message}`);
-                        return NextResponse.json({ message: insertError.message }, { status: 500 });
-                    }
-
-                    console.log(`Created subscription: ${JSON.stringify(data)}`);
-                }
-
-                // Double-check by fetching again
-                const { data: verifyData, error: verifyError } = await adminSupabase
-                    .from('user_subscriptions')
-                    .select('*')
-                    .eq('user_id', userId)
-                    .single();
-
-                if (verifyError) {
-                    console.error(`❌ Error verifying update: ${verifyError.message}`);
-                } else {
-                    console.log(`✅ Verification - database now has:`, verifyData);
-
-                    if (verifyData.plan_id !== planId) {
-                        console.error(`⚠️ CRITICAL ERROR: Plan not updated correctly. Expected ${planId}, got ${verifyData.plan_id}`);
-                    } else {
-                        console.log(`✅ SUCCESS: Plan correctly updated to ${planId}`);
-                    }
-                }
-
-                return NextResponse.json({
-                    success: true,
-                    message: `Plan updated to ${planId}`
-                });
-
-            } catch (dbError) {
-                console.error('❌ Database operation error:', dbError);
-                return NextResponse.json({
-                    error: dbError instanceof Error ? dbError.message : 'Unknown error'
-                }, { status: 500 });
-            }
+            console.log(`User ID: ${userId}, Plan ID: ${planId}`);
+            console.log(`Subscription ID: ${subscriptionId}, Customer ID: ${customerId}`);
         }
 
-        return NextResponse.json({ received: true });
+        // Always return 200 OK to acknowledge receipt
+        return NextResponse.json({ received: true, success: true });
     } catch (error) {
         console.error('❌ TEST Webhook error:', error);
         // Return 200 status code to acknowledge receipt to Stripe
-        return NextResponse.json({ received: true }, { status: 200 });
+        return NextResponse.json({ received: true, error: String(error) }, { status: 200 });
     }
 }
