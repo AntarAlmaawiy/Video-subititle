@@ -22,6 +22,41 @@ export async function GET(): Promise<NextResponse> {
 
         console.log(`📋 Running subscription debug for user: ${userId}`);
 
+        // Check if the user exists in profiles table first
+        console.log(`🔍 Checking if user ${userId} exists in profiles table...`);
+        const { error: userCheckError } = await adminSupabase
+            .from('profiles')
+            .select('id')
+            .eq('id', userId)
+            .single();
+
+        // If user doesn't exist, create it
+        if (userCheckError && userCheckError.code === 'PGRST116') {
+            // PGRST116 means no rows found
+            console.log(`⚠️ User ${userId} not found in profiles table. Creating user profile...`);
+            const { data: newUser, error: createError } = await adminSupabase
+                .from('profiles')
+                .insert({
+                    id: userId,
+                    created_at: new Date().toISOString(),
+                    updated_at: new Date().toISOString()
+                })
+                .select();
+
+            if (createError) {
+                console.error('❌ Error creating user profile:', createError);
+                return NextResponse.json({ success: false, error: 'Failed to create user profile' }, { status: 500 });
+            }
+
+            console.log('✅ Created user profile:', newUser);
+        } else if (userCheckError) {
+            // Some other error occurred checking for the user
+            console.error('❌ Error checking for user profile:', userCheckError);
+            return NextResponse.json({ success: false, error: userCheckError.message }, { status: 500 });
+        } else {
+            console.log(`✅ User ${userId} exists in profiles table`);
+        }
+
         // Try to directly update subscription to Pro plan
         const testData = {
             user_id: userId,

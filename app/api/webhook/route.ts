@@ -66,6 +66,40 @@ export async function POST(request: Request): Promise<NextResponse> {
             }
 
             try {
+                // CRITICAL: Check if the user exists in profiles table
+                console.log(`🔍 Checking if user ${userId} exists in profiles table...`);
+                const { error: userCheckError } = await adminSupabase
+                    .from('profiles')
+                    .select('id')
+                    .eq('id', userId)
+                    .single();
+
+                // If user doesn't exist, create it
+                if (userCheckError && userCheckError.code === 'PGRST116') {
+                    // PGRST116 means no rows found
+                    console.log(`⚠️ User ${userId} not found in profiles table. Creating user profile...`);
+                    const { data: newUser, error: createError } = await adminSupabase
+                        .from('profiles')
+                        .insert({
+                            id: userId,
+                            created_at: new Date().toISOString(),
+                            updated_at: new Date().toISOString()
+                        })
+                        .select();
+
+                    if (createError) {
+                        console.error('❌ Error creating user profile:', createError);
+                        return NextResponse.json({ message: 'Failed to create user profile' }, { status: 200 });
+                    }
+
+                    console.log('✅ Created user profile:', newUser);
+                } else if (userCheckError) {
+                    console.error('❌ Error checking for user profile:', userCheckError);
+                    return NextResponse.json({ message: 'Error checking user profile' }, { status: 200 });
+                } else {
+                    console.log(`✅ User ${userId} exists in profiles table`);
+                }
+
                 // Get subscription details from Stripe
                 const subscription = await stripe.subscriptions.retrieve(subscriptionId);
 
@@ -101,6 +135,19 @@ export async function POST(request: Request): Promise<NextResponse> {
                 }
 
                 console.log('✅ Subscription updated in database:', data);
+
+                // Double-check the database to ensure it's updated
+                const { data: checkData, error: checkError } = await adminSupabase
+                    .from('user_subscriptions')
+                    .select('*')
+                    .eq('user_id', userId)
+                    .single();
+
+                if (checkError) {
+                    console.error('❌ Error checking updated subscription:', checkError);
+                } else {
+                    console.log('📋 Verified subscription in database:', checkData);
+                }
             } catch (err) {
                 console.error('❌ Error processing checkout session:', err);
                 return NextResponse.json({ message: 'Error processing checkout' }, { status: 200 });
