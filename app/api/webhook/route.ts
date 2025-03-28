@@ -1,4 +1,4 @@
-// app/api/webhook/route.ts - EMERGENCY FIX VERSION
+// app/api/webhook/route.ts - FIXED VERSION
 import { NextResponse } from 'next/server';
 import Stripe from 'stripe';
 import { getAdminSupabase } from '@/lib/admin-supabase';
@@ -44,9 +44,6 @@ export async function POST(request: Request): Promise<NextResponse> {
 
         const adminSupabase = getAdminSupabase();
 
-        // Print the entire event for debugging
-        console.log('FULL EVENT:', JSON.stringify(event, null, 2));
-
         // Handle checkout.session.completed event for new subscriptions
         if (event.type === 'checkout.session.completed') {
             const session = event.data.object as Stripe.Checkout.Session;
@@ -84,115 +81,57 @@ export async function POST(request: Request): Promise<NextResponse> {
                     .split('T')[0];
                 console.log(`📅 Next billing date: ${nextBillingDate}`);
 
-                // CRITICAL FIX: Use raw SQL for direct database update
-                // This bypasses any potential RLS issues or other constraints
-                console.log('🔧 Attempting direct SQL update for plan change');
+                // SIMPLIFIED APPROACH: First check if the user subscription already exists
+                const { data: existingData, error: checkError } = await adminSupabase
+                    .from('user_subscriptions')
+                    .select('id')
+                    .eq('user_id', userId)
+                    .maybeSingle();
 
-                const rawSql = `
-                    DO $$
-                    BEGIN
-                        -- First try to update existing subscription
-                        UPDATE public.user_subscriptions 
-                        SET 
-                            plan_id = '${planId}',
-                            status = '${subscription.status}',
-                            billing_cycle = '${billingCycle}',
-                            next_billing_date = '${nextBillingDate}',
-                            stripe_subscription_id = '${subscriptionId}',
-                            stripe_customer_id = '${customerId}',
-                            updated_at = NOW()
-                        WHERE user_id = '${userId}';
-                        
-                        -- If no rows were updated, insert a new record
-                        IF NOT FOUND THEN
-                            INSERT INTO public.user_subscriptions (
-                                user_id, 
-                                plan_id, 
-                                status, 
-                                billing_cycle, 
-                                next_billing_date, 
-                                stripe_subscription_id, 
-                                stripe_customer_id, 
-                                created_at, 
-                                updated_at
-                            ) VALUES (
-                                '${userId}', 
-                                '${planId}', 
-                                '${subscription.status}', 
-                                '${billingCycle}', 
-                                '${nextBillingDate}', 
-                                '${subscriptionId}', 
-                                '${customerId}', 
-                                NOW(), 
-                                NOW()
-                            );
-                        END IF;
-                    END $$;
-                `;
+                if (checkError) {
+                    console.error('Error checking for existing subscription:', checkError);
+                }
 
-                console.log('Executing SQL:', rawSql);
-
-                // Execute raw SQL
-                const { error: sqlError } = await adminSupabase.rpc('exec_sql', { sql: rawSql });
-
-                if (sqlError) {
-                    console.error('❌ SQL execution error:', sqlError);
-
-                    // Fall back to individual update/insert
-                    console.log('Falling back to standard update/insert');
-
-                    // Check if user subscription exists
-                    const { data: existingData, error: checkError } = await adminSupabase
+                if (existingData) {
+                    // Update existing record - simple update without complex SQL
+                    console.log('Updating existing subscription');
+                    const { error: updateError } = await adminSupabase
                         .from('user_subscriptions')
-                        .select('id')
-                        .eq('user_id', userId)
-                        .maybeSingle();
+                        .update({
+                            plan_id: planId,
+                            status: subscription.status,
+                            billing_cycle: billingCycle,
+                            next_billing_date: nextBillingDate,
+                            stripe_subscription_id: subscriptionId,
+                            stripe_customer_id: customerId,
+                            updated_at: new Date().toISOString()
+                        })
+                        .eq('user_id', userId);
 
-                    if (checkError) {
-                        console.error('Error checking for existing subscription:', checkError);
+                    if (updateError) {
+                        console.error('Update error:', updateError);
+                        throw new Error(`Failed to update subscription: ${updateError.message}`);
                     }
+                } else {
+                    // Insert new record - simple insert without complex SQL
+                    console.log('Creating new subscription');
+                    const { error: insertError } = await adminSupabase
+                        .from('user_subscriptions')
+                        .insert({
+                            user_id: userId,
+                            plan_id: planId,
+                            status: subscription.status,
+                            billing_cycle: billingCycle,
+                            next_billing_date: nextBillingDate,
+                            stripe_subscription_id: subscriptionId,
+                            stripe_customer_id: customerId,
+                            created_at: new Date().toISOString(),
+                            updated_at: new Date().toISOString()
+                        });
 
-                    if (existingData) {
-                        // Update existing record
-                        console.log('Updating existing subscription');
-                        const { error: updateError } = await adminSupabase
-                            .from('user_subscriptions')
-                            .update({
-                                plan_id: planId,
-                                status: subscription.status,
-                                billing_cycle: billingCycle,
-                                next_billing_date: nextBillingDate,
-                                stripe_subscription_id: subscriptionId,
-                                stripe_customer_id: customerId,
-                                updated_at: new Date().toISOString()
-                            })
-                            .eq('user_id', userId);
-
-                        if (updateError) {
-                            console.error('Update error:', updateError);
-                            throw new Error(`Failed to update subscription: ${updateError.message}`);
-                        }
-                    } else {
-                        // Insert new record
-                        console.log('Creating new subscription');
-                        const { error: insertError } = await adminSupabase
-                            .from('user_subscriptions')
-                            .insert({
-                                user_id: userId,
-                                plan_id: planId,
-                                status: subscription.status,
-                                billing_cycle: billingCycle,
-                                next_billing_date: nextBillingDate,
-                                stripe_subscription_id: subscriptionId,
-                                stripe_customer_id: customerId,
-                                created_at: new Date().toISOString(),
-                                updated_at: new Date().toISOString()
-                            });
-
-                        if (insertError) {
-                            console.error('Insert error:', insertError);
-                            throw new Error(`Failed to create subscription: ${insertError.message}`);
-                        }
+                    if (insertError) {
+                        console.error('Insert error:', insertError);
+                        throw new Error(`Failed to create subscription: ${insertError.message}`);
                     }
                 }
 

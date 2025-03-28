@@ -1,17 +1,28 @@
-'use client';
-
-import { useState, useEffect, useCallback, useMemo } from 'react';
-import { useRouter } from 'next/navigation';
-import { useSession } from "next-auth/react";
-import { supabase, getUserStorageStats, getUserSubscription, canUploadMoreVideos } from '@/lib/supabase';
-import { CheckCircle, XCircle, ArrowRight, Crown, Upload, HardDrive, Loader2, RefreshCw, AlertTriangle } from 'lucide-react';
-import { toast } from 'react-hot-toast';
-import ConfirmationModal from '@/components/ConfirmationModal';
+//manage-plan/page.tsx
+"use client"
+import type React from "react"
+import { useState, useEffect, useCallback, useMemo } from "react"
+import { useRouter } from "next/navigation"
+import { useSession } from "next-auth/react"
+import { supabase, getUserStorageStats, getUserSubscription, canUploadMoreVideos } from "@/lib/supabase"
+import {
+    CheckCircle,
+    XCircle,
+    ArrowRight,
+    Crown,
+    Upload,
+    HardDrive,
+    Loader2,
+    RefreshCw,
+    AlertTriangle,
+} from "lucide-react"
+import { toast } from "react-hot-toast"
+import ConfirmationModal from "@/components/ConfirmationModal"
 
 // TestModeToggle Component
 interface TestModeToggleProps {
-    isTestMode: boolean;
-    setIsTestMode: React.Dispatch<React.SetStateAction<boolean>>;
+    isTestMode: boolean
+    setIsTestMode: React.Dispatch<React.SetStateAction<boolean>>
 }
 
 const TestModeToggle: React.FC<TestModeToggleProps> = ({ isTestMode, setIsTestMode }) => {
@@ -31,18 +42,16 @@ const TestModeToggle: React.FC<TestModeToggleProps> = ({ isTestMode, setIsTestMo
                         <label
                             htmlFor="testMode"
                             className={`block h-6 overflow-hidden rounded-full cursor-pointer ${
-                                isTestMode ? 'bg-green-400' : 'bg-gray-300'
+                                isTestMode ? "bg-green-400" : "bg-gray-300"
                             }`}
                         ></label>
                     </div>
-                    <span className="font-medium text-gray-700">
-            {isTestMode ? 'Test Mode ON' : 'Test Mode OFF'}
-          </span>
+                    <span className="font-medium text-gray-700">{isTestMode ? "Test Mode ON" : "Test Mode OFF"}</span>
                 </div>
                 <div className="text-xs text-gray-500">
                     {isTestMode
-                        ? 'Using Stripe test environment - no real charges will be made'
-                        : 'Using production environment - real charges will be made'}
+                        ? "Using Stripe test environment - no real charges will be made"
+                        : "Using production environment - real charges will be made"}
                 </div>
             </div>
 
@@ -53,663 +62,669 @@ const TestModeToggle: React.FC<TestModeToggleProps> = ({ isTestMode, setIsTestMo
                 </div>
             )}
         </div>
-    );
-};
+    )
+}
 // Plan types
 interface PlanFeature {
-    name: string;
-    included: boolean;
+    name: string
+    included: boolean
 }
 
 interface PlanDetails {
-    id: string;
-    name: string;
-    price: number;
-    videosPerDay: number;
-    storage: string;
-    storageBytes: number;
-    features: PlanFeature[];
-    recommended?: boolean;
-    color: string;
-    icon: React.ReactNode;
+    id: string
+    name: string
+    price: number
+    videosPerDay: number
+    storage: string
+    storageBytes: number
+    features: PlanFeature[]
+    recommended?: boolean
+    color: string
+    icon: React.ReactNode
 }
 
 // User subscription type
 interface UserSubscription {
-    plan: string;
-    status: string;
-    nextBillingDate: string;
-    videosUsed: number;
-    videosTotal: number;
-    storageUsed: string;
-    storageTotal: string;
-    storageUsedPercent: number;
-    videosUsedPercent: number;
+    plan: string
+    status: string
+    nextBillingDate: string
+    videosUsed: number
+    videosTotal: number
+    storageUsed: string
+    storageTotal: string
+    storageUsedPercent: number
+    videosUsedPercent: number
 }
 
 export default function ManagePlanPage() {
-    const router = useRouter();
-    const { data: session, status } = useSession();
-    const [selectedPlan, setSelectedPlan] = useState<string | null>(null);
-    const [activeTab, setActiveTab] = useState<'monthly' | 'yearly'>('monthly');
-    const [loading, setLoading] = useState(true);
-    const [refreshing, setRefreshing] = useState(false);
-    const [error, setError] = useState<string | null>(null);
-    const [processingPayment, setProcessingPayment] = useState(false);
-    const [loadAttempted, setLoadAttempted] = useState(false);
-    const [isTestMode, setIsTestMode] = useState(false);
+    const router = useRouter()
+    const { data: session, status } = useSession()
+    const [selectedPlan, setSelectedPlansetSelectedPlan] = useState<string | null>(null)
+    const [activeTab, setActiveTab] = useState<"monthly" | "yearly">("monthly")
+    const [loading, setLoading] = useState(true)
+    const [refreshing, setRefreshing] = useState(false)
+    const [error, setError] = useState<string | null>(null)
+    const [processingPayment, setProcessingPayment] = useState(false)
+    const [loadAttempted, setLoadAttempted] = useState(false)
+    const [isTestMode, setIsTestMode] = useState(false)
 
     // Modal states
-    const [showCancelModal, setShowCancelModal] = useState(false);
-    const [showRenewModal, setShowRenewModal] = useState(false);
+    const [showCancelModal, setShowCancelModal] = useState(false)
+    const [showRenewModal, setShowRenewModal] = useState(false)
 
     // Current subscription state
     const [currentSubscription, setCurrentSubscription] = useState<UserSubscription>({
-        plan: 'free',
-        status: 'active',
-        nextBillingDate: '2025-04-08',
+        plan: "free",
+        status: "active",
+        nextBillingDate: "2025-04-08",
         videosUsed: 0,
         videosTotal: 1,
-        storageUsed: '0',
-        storageTotal: '5',
+        storageUsed: "0",
+        storageTotal: "5",
         storageUsedPercent: 0,
-        videosUsedPercent: 0
-    });
+        videosUsedPercent: 0,
+    })
 
     // Plans data wrapped in useMemo to prevent it from being recreated on every render
-    const plans: PlanDetails[] = useMemo(() => [
-        {
-            id: 'free',
-            name: 'Free',
-            price: 0,
-            videosPerDay: 1,
-            storage: '500MB',
-            storageBytes: 500 * 1024 * 1024, // 500MB in bytes
-            color: 'bg-gray-100 border-gray-300',
-            icon: <Upload className="h-8 w-8 text-gray-500" />,
-            features: [
-                { name: '1 free video translate per day', included: true },
-                { name: '500MB storage', included: true },
-                { name: 'Basic subtitle editing', included: true },
-                { name: 'Support for 100+ languages', included: true },
-                { name: 'Standard quality AI', included: true },
-                { name: 'Email support', included: true },
-            ]
-        },
-        {
-            id: 'pro',
-            name: 'Pro',
-            price: 14.99,
-            videosPerDay: 10,
-            storage: '5GB',
-            storageBytes: 5 * 1024 * 1024 * 1024,
-            color: 'bg-blue-50 border-blue-300',
-            icon: <Crown className="h-8 w-8 text-blue-500" />,
-            features: [
-                { name: '10 video translates per day', included: true },
-                { name: '5GB storage', included: true },
-                { name: 'Advanced subtitle editing', included: true },
-                { name: 'Support for 100+ languages', included: true },
-                { name: 'Enhanced quality AI', included: true },
-                { name: 'Priority email support', included: true },
-            ],
-            recommended: true
-        },
-        {
-            id: 'elite',
-            name: 'Elite',
-            price: 39.99,
-            videosPerDay: 30,
-            storage: '10GB',
-            storageBytes: 10 * 1024 * 1024 * 1024, // 10GB in bytes
-            color: 'bg-purple-50 border-purple-300',
-            icon: <HardDrive className="h-8 w-8 text-purple-500" />,
-            features: [
-                { name: '30 video translates per day', included: true },
-                { name: '10GB storage', included: true },
-                { name: 'Professional subtitle editing', included: true },
-                { name: 'Support for 100+ languages', included: true },
-                { name: 'Premium quality AI', included: true },
-                { name: 'Priority 24/7 support', included: true },
-            ]
-        },
-    ], []);
+    const plans: PlanDetails[] = useMemo(
+        () => [
+            {
+                id: "free",
+                name: "Free",
+                price: 0,
+                videosPerDay: 1,
+                storage: "500MB",
+                storageBytes: 500 * 1024 * 1024, // 500MB in bytes
+                color: "bg-gray-100 border-gray-300",
+                icon: <Upload className="h-8 w-8 text-gray-500" />,
+                features: [
+                    { name: "1 free video translate per day", included: true },
+                    { name: "500MB storage", included: true },
+                    { name: "Basic subtitle editing", included: true },
+                    { name: "Support for 100+ languages", included: true },
+                    { name: "Standard quality AI", included: true },
+                    { name: "Email support", included: true },
+                ],
+            },
+            {
+                id: "pro",
+                name: "Pro",
+                price: 14.99,
+                videosPerDay: 10,
+                storage: "5GB",
+                storageBytes: 5 * 1024 * 1024 * 1024,
+                color: "bg-blue-50 border-blue-300",
+                icon: <Crown className="h-8 w-8 text-blue-500" />,
+                features: [
+                    { name: "10 video translates per day", included: true },
+                    { name: "5GB storage", included: true },
+                    { name: "Advanced subtitle editing", included: true },
+                    { name: "Support for 100+ languages", included: true },
+                    { name: "Enhanced quality AI", included: true },
+                    { name: "Priority email support", included: true },
+                ],
+                recommended: true,
+            },
+            {
+                id: "elite",
+                name: "Elite",
+                price: 39.99,
+                videosPerDay: 30,
+                storage: "10GB",
+                storageBytes: 10 * 1024 * 1024 * 1024, // 10GB in bytes
+                color: "bg-purple-50 border-purple-300",
+                icon: <HardDrive className="h-8 w-8 text-purple-500" />,
+                features: [
+                    { name: "30 video translates per day", included: true },
+                    { name: "10GB storage", included: true },
+                    { name: "Professional subtitle editing", included: true },
+                    { name: "Support for 100+ languages", included: true },
+                    { name: "Premium quality AI", included: true },
+                    { name: "Priority 24/7 support", included: true },
+                ],
+            },
+        ],
+        [],
+    )
 
     // Calculate yearly prices (20% discount)
     const getPrice = (plan: PlanDetails) => {
-        if (plan.price === 0) return 0;
-        return activeTab === 'yearly' ? (plan.price * 12 * 0.8).toFixed(2) : plan.price.toFixed(2);
-    };
+        if (plan.price === 0) return 0
+        return activeTab === "yearly" ? (plan.price * 12 * 0.8).toFixed(2) : plan.price.toFixed(2)
+    }
 
     // Load user's subscription data and usage
-    const fetchUserData = useCallback(async (forceRefresh = false) => {
-        if (status !== "authenticated" || !session?.user?.id) return;
-
-        try {
-            setLoading(true);
-            setLoadAttempted(true);
-            setError(null); // Clear any previous errors
-
-            console.log("Fetching user data for plan management...");
-
-            // Directly query the database first for the most up-to-date subscription information
-            const { data: directSubscriptionData, error: subError } = await supabase
-                .from('user_subscriptions')
-                .select('*, subscription_plans(*)')
-                .eq('user_id', session.user.id)
-                .single();
-
-            if (subError && subError.code !== 'PGRST116') {
-                console.error("Error fetching subscription directly:", subError);
-            }
-
-            // Log what we found directly from the database
-            if (directSubscriptionData) {
-                console.log("Found subscription in database:", directSubscriptionData);
-            } else {
-                console.log("No subscription found directly in database, will use getUserSubscription");
-            }
-
-            // Get user's subscription plan from Supabase - won't throw errors
-            const userSubscription = await getUserSubscription(session.user.id);
-            console.log("User subscription from getUserSubscription:", userSubscription);
-
-            // Match the plan to get limits - with fallback to free plan
-            const userPlanId = directSubscriptionData?.plan_id || userSubscription.plan_id || 'free';
-            const userPlan = plans.find(plan => plan.id === userPlanId) || plans[0];
-
-            console.log("Resolved user plan:", userPlan.id);
+    const fetchUserData = useCallback(
+        async (forceRefresh = false) => {
+            if (status !== "authenticated" || !session?.user?.id) return
 
             try {
-                // Get storage statistics - won't throw errors
-                const storageStats = await getUserStorageStats(session.user.id);
-                console.log("Storage stats:", storageStats);
+                setLoading(true)
+                setLoadAttempted(true)
+                setError(null) // Clear any previous errors
 
-                // Get daily video usage - won't throw errors
-                const videoUsage = await canUploadMoreVideos(session.user.id);
-                console.log("Video usage:", videoUsage);
+                console.log("Fetching user data for plan management...")
 
-                // Format storage values for display
-                const formatBytes = (bytes: number) => {
-                    if (bytes === 0) return '0';
-                    const k = 1024;
-                    const i = Math.floor(Math.log(bytes) / Math.log(k));
-                    return parseFloat((bytes / Math.pow(k, i)).toFixed(2));
-                };
+                // Directly query the database first for the most up-to-date subscription information
+                const { data: directSubscriptionData, error: subError } = await supabase
+                    .from("user_subscriptions")
+                    .select("*, subscription_plans(*)")
+                    .eq("user_id", session.user.id)
+                    .single()
 
-                // Calculate percentages for progress bars
-                const storageUsedPercent = Math.round((storageStats.usedStorage / storageStats.maxStorage) * 100);
-                const videosUsedPercent = Math.round((videoUsage.currentCount / videoUsage.limit) * 100);
+                if (subError && subError.code !== "PGRST116") {
+                    console.error("Error fetching subscription directly:", subError)
+                }
 
-                // Use the status from direct query if available, otherwise from getUserSubscription
-                const subscriptionStatus = directSubscriptionData?.status || userSubscription.status || 'active';
-
-                // Use next_billing_date from direct query if available
-                const nextBillingDate = directSubscriptionData?.next_billing_date ||
-                    userSubscription.next_billing_date ||
-                    new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-
-                // Format storage total based on plan
-                let formattedStorageTotal;
-                if (userPlan.id === 'free') {
-                    // For free plan, use MB
-                    formattedStorageTotal = formatBytes(userPlan.storageBytes).toString();
+                // Log what we found directly from the database
+                if (directSubscriptionData) {
+                    console.log("Found subscription in database:", directSubscriptionData)
                 } else {
-                    // For paid plans, use GB
-                    formattedStorageTotal = formatBytes(userPlan.storageBytes).toString();
+                    console.log("No subscription found directly in database, will use getUserSubscription")
                 }
 
-                // Update subscription state with real data
-                setCurrentSubscription({
-                    plan: userPlan.id,
-                    status: subscriptionStatus,
-                    nextBillingDate: nextBillingDate,
-                    videosUsed: videoUsage.currentCount,
-                    videosTotal: userPlan.videosPerDay,
-                    storageUsed: formatBytes(storageStats.usedStorage).toString(),
-                    storageTotal: formattedStorageTotal,
-                    storageUsedPercent: storageUsedPercent,
-                    videosUsedPercent: videosUsedPercent
-                });
+                // Get user's subscription plan from Supabase - won't throw errors
+                const userSubscription = await getUserSubscription(session.user.id)
+                console.log("User subscription from getUserSubscription:", userSubscription)
 
-                // Show success toast if this was a manual refresh
+                // Match the plan to get limits - with fallback to free plan
+                const userPlanId = directSubscriptionData?.plan_id || userSubscription.plan_id || "free"
+                const userPlan = plans.find((plan) => plan.id === userPlanId) || plans[0]
+
+                console.log("Resolved user plan:", userPlan.id)
+
+                try {
+                    // Get storage statistics - won't throw errors
+                    const storageStats = await getUserStorageStats(session.user.id)
+                    console.log("Storage stats:", storageStats)
+
+                    // Get daily video usage - won't throw errors
+                    const videoUsage = await canUploadMoreVideos(session.user.id)
+                    console.log("Video usage:", videoUsage)
+
+                    // Format storage values for display
+                    const formatBytes = (bytes: number) => {
+                        if (bytes === 0) return "0"
+                        const k = 1024
+                        const i = Math.floor(Math.log(bytes) / Math.log(k))
+                        return Number.parseFloat((bytes / Math.pow(k, i)).toFixed(2))
+                    }
+
+                    // Calculate percentages for progress bars
+                    const storageUsedPercent = Math.round((storageStats.usedStorage / storageStats.maxStorage) * 100)
+                    const videosUsedPercent = Math.round((videoUsage.currentCount / videoUsage.limit) * 100)
+
+                    // Use the status from direct query if available, otherwise from getUserSubscription
+                    const subscriptionStatus = directSubscriptionData?.status || userSubscription.status || "active"
+
+                    // Use next_billing_date from direct query if available
+                    const nextBillingDate =
+                        directSubscriptionData?.next_billing_date ||
+                        userSubscription.next_billing_date ||
+                        new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]
+
+                    // Format storage total based on plan
+                    let formattedStorageTotal
+                    if (userPlan.id === "free") {
+                        // For free plan, use MB
+                        formattedStorageTotal = formatBytes(userPlan.storageBytes).toString()
+                    } else {
+                        // For paid plans, use GB
+                        formattedStorageTotal = formatBytes(userPlan.storageBytes).toString()
+                    }
+
+                    // Update subscription state with real data
+                    setCurrentSubscription({
+                        plan: userPlan.id,
+                        status: subscriptionStatus,
+                        nextBillingDate: nextBillingDate,
+                        videosUsed: videoUsage.currentCount,
+                        videosTotal: userPlan.videosPerDay,
+                        storageUsed: formatBytes(storageStats.usedStorage).toString(),
+                        storageTotal: formattedStorageTotal,
+                        storageUsedPercent: storageUsedPercent,
+                        videosUsedPercent: videosUsedPercent,
+                    })
+
+                    // Show success toast if this was a manual refresh
+                    if (forceRefresh) {
+                        toast.success("Subscription data refreshed successfully")
+                    }
+                } catch (statsErr) {
+                    console.error("Error fetching usage stats:", statsErr)
+
+                    // If we can't get usage stats, still use the plan info but with default usage
+                    setCurrentSubscription({
+                        plan: userPlan.id,
+                        status: directSubscriptionData?.status || userSubscription.status || "active",
+                        nextBillingDate:
+                            directSubscriptionData?.next_billing_date || userSubscription.next_billing_date || "2025-04-08",
+                        videosUsed: 0,
+                        videosTotal: userPlan.videosPerDay,
+                        storageUsed: "0",
+                        storageTotal: userPlan.storage.replace("GB", "").replace("MB", ""),
+                        storageUsedPercent: 0,
+                        videosUsedPercent: 0,
+                    })
+                }
+            } catch (err: unknown) {
+                console.error("Error fetching user data:", err)
+                const errorMessage = err instanceof Error ? err.message : "Failed to load your subscription data"
+                setError(errorMessage)
+
                 if (forceRefresh) {
-                    toast.success("Subscription data refreshed successfully");
+                    toast.error("Could not refresh subscription data. Please try again.")
                 }
-            } catch (statsErr) {
-                console.error("Error fetching usage stats:", statsErr);
 
-                // If we can't get usage stats, still use the plan info but with default usage
+                // Default values if everything fails
                 setCurrentSubscription({
-                    plan: userPlan.id,
-                    status: directSubscriptionData?.status || userSubscription.status || 'active',
-                    nextBillingDate: directSubscriptionData?.next_billing_date || userSubscription.next_billing_date || '2025-04-08',
+                    plan: "free",
+                    status: "active",
+                    nextBillingDate: "2025-04-08",
                     videosUsed: 0,
-                    videosTotal: userPlan.videosPerDay,
-                    storageUsed: '0',
-                    storageTotal: userPlan.storage.replace('GB', '').replace('MB', ''),
+                    videosTotal: 1,
+                    storageUsed: "0",
+                    storageTotal: "5",
                     storageUsedPercent: 0,
-                    videosUsedPercent: 0
-                });
+                    videosUsedPercent: 0,
+                })
+            } finally {
+                // Always turn off loading after 2 seconds max, even if something is stuck
+                setTimeout(() => {
+                    if (loading) {
+                        console.log("Forcing loading state to complete after timeout")
+                        setLoading(false)
+                    }
+                }, 2000)
+
+                setLoading(false)
+                setRefreshing(false)
             }
-        } catch (err: unknown) {
-            console.error('Error fetching user data:', err);
-            const errorMessage = err instanceof Error ? err.message : 'Failed to load your subscription data';
-            setError(errorMessage);
-
-            if (forceRefresh) {
-                toast.error("Could not refresh subscription data. Please try again.");
-            }
-
-            // Default values if everything fails
-            setCurrentSubscription({
-                plan: 'free',
-                status: 'active',
-                nextBillingDate: '2025-04-08',
-                videosUsed: 0,
-                videosTotal: 1,
-                storageUsed: '0',
-                storageTotal: '5',
-                storageUsedPercent: 0,
-                videosUsedPercent: 0
-            });
-        } finally {
-            // Always turn off loading after 2 seconds max, even if something is stuck
-            setTimeout(() => {
-                if (loading) {
-                    console.log("Forcing loading state to complete after timeout");
-                    setLoading(false);
-                }
-            }, 2000);
-
-            setLoading(false);
-            setRefreshing(false);
-        }
-    }, [session?.user?.id, status, plans, loading]);
+        },
+        [session?.user?.id, status, plans, loading],
+    )
 
     // Improved refreshSubscription function with retry logic
     const refreshSubscription = useCallback(async () => {
-        setRefreshing(true);
-        let retryCount = 0;
-        const maxRetries = 3;
+        setRefreshing(true)
+        let retryCount = 0
+        const maxRetries = 3
 
         // Add this to your refreshSubscription function
         const forceUpdate = async () => {
             try {
-                const response = await fetch('/api/force-subscription-update');
+                const response = await fetch("/api/force-subscription-update")
                 if (response.ok) {
-                    const data = await response.json();
-                    console.log('Force update result:', data);
-                    return data.success;
+                    const data = await response.json()
+                    console.log("Force update result:", data)
+                    return data.success
                 }
             } catch (err) {
-                console.error('Error forcing update:', err);
+                console.error("Error forcing update:", err)
             }
-            return false;
-        };
+            return false
+        }
 
         // Call it during refresh
-        await forceUpdate();
+        await forceUpdate()
 
         // FIXED attemptRefresh function
         const attemptRefresh = async () => {
             try {
                 // Verify user is authenticated before proceeding
                 if (!session?.user?.id) {
-                    console.log("User not authenticated yet, delaying subscription refresh");
+                    console.log("User not authenticated yet, delaying subscription refresh")
                     // Wait a bit and try again later
-                    return new Promise(resolve =>
-                        setTimeout(() => resolve(attemptRefresh()), 1000)
-                    );
+                    return new Promise((resolve) => setTimeout(() => resolve(attemptRefresh()), 1000))
                 }
 
                 // Clear any previous errors
-                setError(null);
+                setError(null)
 
                 // Get the most up-to-date subscription data directly from the database
                 const { data: directSubscriptionData, error: subError } = await supabase
-                    .from('user_subscriptions')
-                    .select('*, subscription_plans(*)')
-                    .eq('user_id', session.user.id)
-                    .single();
+                    .from("user_subscriptions")
+                    .select("*, subscription_plans(*)")
+                    .eq("user_id", session.user.id)
+                    .single()
 
-                if (subError && subError.code !== 'PGRST116') {
-                    console.error("Error fetching subscription directly:", subError);
-                    setError(`Database error: ${subError.message}`);
+                if (subError && subError.code !== "PGRST116") {
+                    console.error("Error fetching subscription directly:", subError)
+                    setError(`Database error: ${subError.message}`)
                 }
 
                 if (directSubscriptionData) {
-                    console.log("Found subscription in database:", directSubscriptionData);
+                    console.log("Found subscription in database:", directSubscriptionData)
 
                     // Update UI with fetched data
-                    setCurrentSubscription(prev => ({
+                    setCurrentSubscription((prev) => ({
                         ...prev,
                         plan: directSubscriptionData.plan_id,
                         status: directSubscriptionData.status,
-                        nextBillingDate: directSubscriptionData.next_billing_date
-                    }));
+                        nextBillingDate: directSubscriptionData.next_billing_date,
+                    }))
 
                     // Then fetch the rest of the plan data
-                    await fetchUserData(true);
+                    await fetchUserData(true)
 
-                    toast.success("Subscription data refreshed successfully!");
-                    setRefreshing(false);
-                    return true;
+                    toast.success("Subscription data refreshed successfully!")
+                    setRefreshing(false)
+                    return true
                 } else {
-                    console.log("No subscription found directly, will use getUserSubscription");
+                    console.log("No subscription found directly, will use getUserSubscription")
                     // Fall back to regular fetch
-                    await fetchUserData(true);
-                    setRefreshing(false);
-                    return true;
+                    await fetchUserData(true)
+                    setRefreshing(false)
+                    return true
                 }
             } catch (err) {
-                console.error("Error refreshing subscription:", err);
-                retryCount++;
+                console.error("Error refreshing subscription:", err)
+                retryCount++
 
                 if (retryCount >= maxRetries) {
-                    toast.error("Could not refresh subscription after multiple attempts. Please try again later.");
-                    setRefreshing(false);
-                    return false;
+                    toast.error("Could not refresh subscription after multiple attempts. Please try again later.")
+                    setRefreshing(false)
+                    return false
                 }
 
                 // Wait before retrying (exponential backoff)
-                const delay = Math.pow(2, retryCount) * 1000;
-                toast.loading(`Retrying in ${delay/1000} seconds...`, { duration: delay });
+                const delay = Math.pow(2, retryCount) * 1000
+                toast.loading(`Retrying in ${delay / 1000} seconds...`, { duration: delay })
 
-                return new Promise(resolve => setTimeout(() => resolve(attemptRefresh()), delay));
+                return new Promise((resolve) => setTimeout(() => resolve(attemptRefresh()), delay))
             }
-        };
+        }
 
-        return attemptRefresh();
-    }, [session?.user?.id, fetchUserData]);
+        return attemptRefresh()
+    }, [session?.user?.id, fetchUserData])
 
     // Check if returning from Stripe
     useEffect(() => {
-        if (typeof window !== 'undefined') {
-            const urlParams = new URLSearchParams(window.location.search);
-            const success = urlParams.get('success');
+        if (typeof window !== "undefined") {
+            const urlParams = new URLSearchParams(window.location.search)
+            const success = urlParams.get("success")
 
-            if (success === 'true') {
+            if (success === "true") {
                 // Check if we have session before proceeding
                 if (status === "authenticated" && session?.user?.id) {
-                    toast.success('Payment successful! Your subscription is being updated...');
+                    toast.success("Payment successful! Your subscription is being updated...")
 
                     // Get test mode from localStorage
-                    const wasTestMode = localStorage.getItem('checkoutTestMode') === 'true';
+                    const wasTestMode = localStorage.getItem("checkoutTestMode") === "true"
                     if (wasTestMode) {
-                        console.log('This was a test mode checkout');
+                        console.log("This was a test mode checkout")
                     }
 
                     // Force a direct refresh from the database
                     const checkSubscription = async () => {
                         try {
-                            const response = await fetch('/api/user-subscription');
+                            const response = await fetch("/api/user-subscription")
                             if (response.ok) {
-                                const data = await response.json();
-                                console.log("Subscription after payment:", data.subscription);
-                                await refreshSubscription();
+                                const data = await response.json()
+                                console.log("Subscription after payment:", data.subscription)
+                                await refreshSubscription()
                             }
                         } catch (err) {
-                            console.error("Error checking subscription:", err);
+                            console.error("Error checking subscription:", err)
                         }
-                    };
+                    }
 
                     // Give the webhook a chance to process
-                    setTimeout(checkSubscription, 2000);
+                    setTimeout(checkSubscription, 2000)
                 } else {
                     // Save the success state and check after authentication
-                    localStorage.setItem('pendingSubscriptionCheck', 'true');
+                    localStorage.setItem("pendingSubscriptionCheck", "true")
                 }
 
                 // Clean up URL
-                window.history.replaceState({}, document.title, window.location.pathname);
+                window.history.replaceState({}, document.title, window.location.pathname)
             }
         }
-    }, [status, session?.user?.id, refreshSubscription]);
+    }, [status, session?.user?.id, refreshSubscription])
 
     // Check localStorage for pending checkout
     const checkPendingCheckout = useCallback(async () => {
         // Don't proceed if not authenticated
         if (status !== "authenticated" || !session?.user?.id) {
-            console.log("User not authenticated, delaying checkout verification");
-            return;
+            console.log("User not authenticated, delaying checkout verification")
+            return
         }
 
-        if (typeof window !== 'undefined') {
-            const pendingCheckout = localStorage.getItem('pendingCheckout');
-            const checkoutTime = localStorage.getItem('checkoutTime');
+        if (typeof window !== "undefined") {
+            const pendingCheckout = localStorage.getItem("pendingCheckout")
+            const checkoutTime = localStorage.getItem("checkoutTime")
 
-            if (pendingCheckout === 'true' && checkoutTime) {
+            if (pendingCheckout === "true" && checkoutTime) {
                 // Check if this is recent (within last 10 minutes)
-                const timeElapsed = Date.now() - parseInt(checkoutTime);
-                const isRecent = timeElapsed < 10 * 60 * 1000; // 10 minutes
+                const timeElapsed = Date.now() - Number.parseInt(checkoutTime)
+                const isRecent = timeElapsed < 10 * 60 * 1000 // 10 minutes
 
                 if (isRecent) {
-                    console.log('Detected recent checkout. Refreshing subscription data...');
+                    console.log("Detected recent checkout. Refreshing subscription data...")
 
-                    toast.loading('Checking subscription status...', {
-                        id: 'checking-subscription'
-                    });
+                    toast.loading("Checking subscription status...", {
+                        id: "checking-subscription",
+                    })
 
                     // Call refreshSubscription only if we have a valid session
                     setTimeout(async () => {
-                        const success = await refreshSubscription();
+                        const success = await refreshSubscription()
 
                         if (success) {
-                            localStorage.removeItem('pendingCheckout');
-                            localStorage.removeItem('checkoutTime');
-                            localStorage.removeItem('checkoutTestMode');
+                            localStorage.removeItem("pendingCheckout")
+                            localStorage.removeItem("checkoutTime")
+                            localStorage.removeItem("checkoutTestMode")
 
-                            toast.success('Subscription updated successfully', {
-                                id: 'checking-subscription'
-                            });
+                            toast.success("Subscription updated successfully", {
+                                id: "checking-subscription",
+                            })
                         } else {
-                            toast.error('Could not verify subscription status', {
-                                id: 'checking-subscription'
-                            });
+                            toast.error("Could not verify subscription status", {
+                                id: "checking-subscription",
+                            })
                         }
-                    }, 2000);
+                    }, 2000)
                 } else {
                     // Clean up old data
-                    localStorage.removeItem('pendingCheckout');
-                    localStorage.removeItem('checkoutTime');
-                    localStorage.removeItem('checkoutTestMode');
+                    localStorage.removeItem("pendingCheckout")
+                    localStorage.removeItem("checkoutTime")
+                    localStorage.removeItem("checkoutTestMode")
                 }
             }
         }
-    }, [session?.user?.id, status, refreshSubscription]);
+    }, [session?.user?.id, status, refreshSubscription])
 
     // Check on component mount
     useEffect(() => {
         if (status === "unauthenticated") {
-            router.push('/signin');
-            return;
+            router.push("/signin")
+            return
         }
 
         // Only proceed if authentication is complete
         if (status === "authenticated" && session?.user?.id) {
             if (!loadAttempted) {
-                console.log("Authentication confirmed, loading subscription data");
-                fetchUserData();
+                console.log("Authentication confirmed, loading subscription data")
+                fetchUserData()
 
                 // Check for pending checkout only after auth is confirmed
                 setTimeout(() => {
-                    checkPendingCheckout();
-                }, 1000); // Give a small delay after initial data fetch
+                    checkPendingCheckout()
+                }, 1000) // Give a small delay after initial data fetch
             }
         } else {
-            console.log("Waiting for authentication to complete");
+            console.log("Waiting for authentication to complete")
         }
-    }, [status, router, session?.user?.id, fetchUserData, loadAttempted, checkPendingCheckout]);
+    }, [status, router, session?.user?.id, fetchUserData, loadAttempted, checkPendingCheckout])
 
     // Handle checkout with Stripe
     const handleUpgrade = async (planId: string) => {
         if (!session?.user?.id) {
-            router.push('/signin');
-            return;
+            router.push("/signin")
+            return
         }
 
-        setSelectedPlan(planId);
-        setProcessingPayment(true);
-        setError(null);
+        setSelectedPlansetSelectedPlan(planId)
+        setProcessingPayment(true)
+        setError(null)
 
         try {
             // Create a checkout session with Stripe
-            const response = await fetch('/api/create-checkout-session', {
-                method: 'POST',
+            const response = await fetch("/api/create-checkout-session", {
+                method: "POST",
                 headers: {
-                    'Content-Type': 'application/json',
+                    "Content-Type": "application/json",
                 },
                 body: JSON.stringify({
                     planId: planId,
                     billingCycle: activeTab,
                     testMode: isTestMode, // Add the test mode flag
                 }),
-            });
+            })
 
             if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.message || 'Failed to create checkout session');
+                const errorData = await response.json()
+                throw new Error(errorData.message || "Failed to create checkout session")
             }
 
-            const { sessionUrl } = await response.json();
+            const { sessionUrl } = await response.json()
 
             // Store checkout info in localStorage for verification on return
-            localStorage.setItem('pendingCheckout', 'true');
-            localStorage.setItem('checkoutTime', Date.now().toString());
-            localStorage.setItem('checkoutTestMode', isTestMode ? 'true' : 'false'); // Store test mode state
+            localStorage.setItem("pendingCheckout", "true")
+            localStorage.setItem("checkoutTime", Date.now().toString())
+            localStorage.setItem("checkoutTestMode", isTestMode ? "true" : "false") // Store test mode state
 
             // Redirect to Stripe Checkout
-            window.location.href = sessionUrl;
+            window.location.href = sessionUrl
         } catch (err: unknown) {
-            console.error('Checkout error:', err);
-            toast.error(err instanceof Error ? err.message : 'Failed to process checkout');
-            setProcessingPayment(false);
+            console.error("Checkout error:", err)
+            toast.error(err instanceof Error ? err.message : "Failed to process checkout")
+            setProcessingPayment(false)
         }
-    };
+    }
 
     // Show cancel confirmation modal
     const handleCancel = async () => {
-        if (!session?.user?.id) return;
-        setShowCancelModal(true);
-    };
+        if (!session?.user?.id) return
+        setShowCancelModal(true)
+    }
 
     // Process cancellation after confirmation
     const confirmCancel = async () => {
         try {
-            setProcessingPayment(true);
-            setShowCancelModal(false); // Close the modal
+            setProcessingPayment(true)
+            setShowCancelModal(false) // Close the modal
 
             // Force UI update immediately for better UX
-            setCurrentSubscription(prev => ({
+            setCurrentSubscription((prev) => ({
                 ...prev,
-                status: 'canceled'  // Use 'canceled' not 'canceling'
-            }));
+                status: "canceled", // Use 'canceled' not 'canceling'
+            }))
 
             // Cancel subscription in your database and with Stripe
-            const response = await fetch('/api/cancel-subscription', {
-                method: 'POST',
+            const response = await fetch("/api/cancel-subscription", {
+                method: "POST",
                 headers: {
-                    'Content-Type': 'application/json',
+                    "Content-Type": "application/json",
                 },
                 body: JSON.stringify({
                     testMode: isTestMode, // Include test mode flag
                 }),
-            });
+            })
 
             // First log the raw response for debugging
-            console.log('Raw cancel response:', response);
+            console.log("Raw cancel response:", response)
 
-            const data = await response.json();
-            console.log('Cancellation response data:', data);
+            const data = await response.json()
+            console.log("Cancellation response data:", data)
 
             if (!response.ok) {
-                throw new Error(data.message || 'Failed to cancel subscription');
+                throw new Error(data.message || "Failed to cancel subscription")
             }
 
-            toast.success('Your subscription has been canceled. You will be downgraded to Free at the end of your billing cycle.');
+            toast.success(
+                "Your subscription has been canceled. You will be downgraded to Free at the end of your billing cycle.",
+            )
 
             // Reload the data after a short delay
             setTimeout(async () => {
-                await refreshSubscription();
+                await refreshSubscription()
 
                 // Make sure UI shows canceled status
-                setCurrentSubscription(prev => ({
+                setCurrentSubscription((prev) => ({
                     ...prev,
-                    status: 'canceled'  // Use 'canceled' not 'canceling'
-                }));
-            }, 1500);
-
+                    status: "canceled", // Use 'canceled' not 'canceling'
+                }))
+            }, 1500)
         } catch (err: unknown) {
-            console.error('Error canceling subscription:', err);
-            toast.error(err instanceof Error ? err.message : 'Failed to cancel subscription');
+            console.error("Error canceling subscription:", err)
+            toast.error(err instanceof Error ? err.message : "Failed to cancel subscription")
 
             // Revert UI if there was an error
-            refreshSubscription();
+            refreshSubscription()
         } finally {
-            setProcessingPayment(false);
+            setProcessingPayment(false)
         }
-    };
+    }
 
     // Show renew confirmation modal
     const handleRenew = async () => {
-        if (!session?.user?.id) return;
-        setShowRenewModal(true);
-    };
+        if (!session?.user?.id) return
+        setShowRenewModal(true)
+    }
 
     // Process renewal after confirmation
     const confirmRenew = async () => {
         try {
-            setProcessingPayment(true);
-            setShowRenewModal(false); // Close the modal
+            setProcessingPayment(true)
+            setShowRenewModal(false) // Close the modal
 
             // Call your renewal API endpoint
-            const response = await fetch('/api/renew-subscription', {
-                method: 'POST',
+            const response = await fetch("/api/renew-subscription", {
+                method: "POST",
                 headers: {
-                    'Content-Type': 'application/json',
+                    "Content-Type": "application/json",
                 },
                 body: JSON.stringify({
                     testMode: isTestMode, // Include test mode flag
                 }),
-            });
+            })
 
-            const data = await response.json();
+            const data = await response.json()
 
             if (!response.ok) {
-                throw new Error(data.message || 'Failed to renew subscription');
+                throw new Error(data.message || "Failed to renew subscription")
             }
 
             // Update UI immediately
-            setCurrentSubscription(prev => ({
+            setCurrentSubscription((prev) => ({
                 ...prev,
-                status: 'active'
-            }));
+                status: "active",
+            }))
 
-            toast.success('Your subscription has been renewed successfully!');
+            toast.success("Your subscription has been renewed successfully!")
 
             // Refresh the subscription data
             setTimeout(() => {
-                refreshSubscription();
-            }, 1500);
-
+                refreshSubscription()
+            }, 1500)
         } catch (err) {
-            console.error('Error renewing subscription:', err);
-            toast.error(err instanceof Error ? err.message : 'Failed to renew subscription');
+            console.error("Error renewing subscription:", err)
+            toast.error(err instanceof Error ? err.message : "Failed to renew subscription")
 
             // Refresh the subscription data even on error
-            refreshSubscription();
+            refreshSubscription()
         } finally {
-            setProcessingPayment(false);
+            setProcessingPayment(false)
         }
-    };
+    }
 
     if (loading || status === "loading") {
         return (
             <div className="flex justify-center items-center h-64">
                 <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-indigo-500"></div>
             </div>
-        );
+        )
     }
 
     return (
@@ -731,59 +746,80 @@ export default function ManagePlanPage() {
                             <div>
                                 <p className="font-medium">Test mode is active</p>
                                 <p className="text-sm mt-1">
-                                    No actual charges will be made. Use test card 4242 4242 4242 4242 with any future expiration date and any 3-digit CVC.
+                                    No actual charges will be made. Use test card 4242 4242 4242 4242 with any future expiration date and
+                                    any 3-digit CVC.
                                 </p>
                             </div>
                         </div>
                     </div>
                 )}
 
-                {error && (
-                    <div className="max-w-4xl mx-auto bg-red-50 p-4 rounded-md mb-6 text-red-600">
-                        {error}
-                    </div>
-                )}
+                {error && <div className="max-w-4xl mx-auto bg-red-50 p-4 rounded-md mb-6 text-red-600">{error}</div>}
 
                 {/* Current Plan Summary */}
                 <div className="max-w-4xl mx-auto bg-white p-6 shadow-md rounded-lg mb-10">
                     <div className="flex justify-between">
-                        <h2 className="text-2xl font-semibold border-b pb-3 mb-4">Current Plan: <span className="text-blue-600">{currentSubscription.plan.charAt(0).toUpperCase() + currentSubscription.plan.slice(1)}</span></h2>
+                        <h2 className="text-2xl font-semibold border-b pb-3 mb-4">
+                            Current Plan:{" "}
+                            <span className="text-blue-600">
+                {currentSubscription.plan.charAt(0).toUpperCase() + currentSubscription.plan.slice(1)}
+              </span>
+                        </h2>
                         <button
                             onClick={refreshSubscription}
                             disabled={refreshing}
                             className="text-blue-600 hover:text-blue-800 flex items-center text-sm"
                         >
-                            {refreshing ? (
-                                <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-                            ) : (
-                                <RefreshCw className="h-4 w-4 mr-1" />
-                            )}
+                            {refreshing ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-1" />}
                             Refresh
                         </button>
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                         <div>
-                            <p className="text-gray-700 mb-2">Status: <span className="font-medium">{currentSubscription.status.charAt(0).toUpperCase() + currentSubscription.status.slice(1)}</span></p>
-                            <p className="text-gray-700">Next Billing Date: <span className="font-medium">{currentSubscription.nextBillingDate}</span></p>
+                            <p className="text-gray-700 mb-2">
+                                Status:{" "}
+                                <span className="font-medium">
+                  {currentSubscription.status.charAt(0).toUpperCase() + currentSubscription.status.slice(1)}
+                </span>
+                            </p>
+                            <p className="text-gray-700">
+                                Next Billing Date: <span className="font-medium">{currentSubscription.nextBillingDate}</span>
+                            </p>
                         </div>
                         <div>
                             <div className="mb-2">
-                                <p className="text-gray-700 mb-1">Videos: <span className="font-medium">{currentSubscription.videosUsed}/{currentSubscription.videosTotal} per day</span></p>
+                                <p className="text-gray-700 mb-1">
+                                    Videos:{" "}
+                                    <span className="font-medium">
+                    {currentSubscription.videosUsed}/{currentSubscription.videosTotal} per day
+                  </span>
+                                </p>
                                 <div className="w-full bg-gray-200 rounded-full h-2">
-                                    <div className="bg-blue-600 h-2 rounded-full" style={{ width: `${currentSubscription.videosUsedPercent}%` }}></div>
+                                    <div
+                                        className="bg-blue-600 h-2 rounded-full"
+                                        style={{ width: `${currentSubscription.videosUsedPercent}%` }}
+                                    ></div>
                                 </div>
                             </div>
                             <div>
-                                <p className="text-gray-700 mb-1">Storage: <span className="font-medium">{currentSubscription.storageUsed}/{currentSubscription.storageTotal}
-                                    {currentSubscription.plan === 'free' ? 'MB' : 'GB'}</span></p>
+                                <p className="text-gray-700 mb-1">
+                                    Storage:{" "}
+                                    <span className="font-medium">
+                    {currentSubscription.storageUsed}/{currentSubscription.storageTotal}
+                                        {currentSubscription.plan === "free" ? "MB" : "GB"}
+                  </span>
+                                </p>
                                 <div className="w-full bg-gray-200 rounded-full h-2">
-                                    <div className="bg-blue-600 h-2 rounded-full" style={{ width: `${currentSubscription.storageUsedPercent}%` }}></div>
+                                    <div
+                                        className="bg-blue-600 h-2 rounded-full"
+                                        style={{ width: `${currentSubscription.storageUsedPercent}%` }}
+                                    ></div>
                                 </div>
                             </div>
                         </div>
                     </div>
-                    {currentSubscription.plan !== 'free' && (
-                        currentSubscription.status === 'canceled' || currentSubscription.status === 'canceling' ? (
+                    {currentSubscription.plan !== "free" &&
+                        (currentSubscription.status === "canceled" || currentSubscription.status === "canceling" ? (
                             <button
                                 className="mt-6 bg-green-500 hover:bg-green-600 text-white py-2 px-6 rounded-md transition-colors font-medium flex items-center"
                                 onClick={handleRenew}
@@ -794,33 +830,35 @@ export default function ManagePlanPage() {
                             </button>
                         ) : (
                             <button
-                                className={`mt-6 ${processingPayment
-                                    ? 'bg-gray-400 cursor-not-allowed'
-                                    : 'bg-red-500 hover:bg-red-600'} text-white py-2 px-6 rounded-md transition-colors font-medium flex items-center`}
+                                className={`mt-6 ${
+                                    processingPayment ? "bg-gray-400 cursor-not-allowed" : "bg-red-500 hover:bg-red-600"
+                                } text-white py-2 px-6 rounded-md transition-colors font-medium flex items-center`}
                                 onClick={handleCancel}
                                 disabled={processingPayment}
                             >
                                 {processingPayment && <Loader2 className="animate-spin h-4 w-4 mr-2" />}
                                 Cancel Subscription
                             </button>
-                        )
-                    )}
+                        ))}
                 </div>
 
                 {/* Billing Toggle */}
                 <div className="flex justify-center mb-8">
                     <div className="bg-white rounded-lg p-1 shadow-md inline-flex">
                         <button
-                            className={`py-2 px-6 rounded-lg font-medium transition-colors ${activeTab === 'monthly' ? 'bg-blue-500 text-white' : 'text-gray-600 hover:bg-gray-100'}`}
-                            onClick={() => setActiveTab('monthly')}
+                            className={`py-2 px-6 rounded-lg font-medium transition-colors ${activeTab === "monthly" ? "bg-blue-500 text-white" : "text-gray-600 hover:bg-gray-100"}`}
+                            onClick={() => setActiveTab("monthly")}
                         >
                             Monthly
                         </button>
                         <button
-                            className={`py-2 px-6 rounded-lg font-medium transition-colors ${activeTab === 'yearly' ? 'bg-blue-500 text-white' : 'text-gray-600 hover:bg-gray-100'}`}
-                            onClick={() => setActiveTab('yearly')}
+                            className={`py-2 px-6 rounded-lg font-medium transition-colors ${activeTab === "yearly" ? "bg-blue-500 text-white" : "text-gray-600 hover:bg-gray-100"}`}
+                            onClick={() => setActiveTab("yearly")}
                         >
-                            Yearly <span className="text-xs font-normal ml-1 bg-green-100 text-green-800 py-0.5 px-1.5 rounded">Save 20%</span>
+                            Yearly{" "}
+                            <span className="text-xs font-normal ml-1 bg-green-100 text-green-800 py-0.5 px-1.5 rounded">
+                Save 20%
+              </span>
                         </button>
                     </div>
                 </div>
@@ -830,12 +868,10 @@ export default function ManagePlanPage() {
                     {plans.map((plan) => (
                         <div
                             key={plan.id}
-                            className={`border ${plan.recommended ? 'ring-2 ring-blue-500' : ''} ${plan.color} rounded-xl shadow-md overflow-hidden transition-transform hover:translate-y-[-4px]`}
+                            className={`border ${plan.recommended ? "ring-2 ring-blue-500" : ""} ${plan.color} rounded-xl shadow-md overflow-hidden transition-transform hover:translate-y-[-4px]`}
                         >
                             {plan.recommended && (
-                                <div className="bg-blue-500 text-white text-center py-1 text-sm font-medium">
-                                    MOST POPULAR
-                                </div>
+                                <div className="bg-blue-500 text-white text-center py-1 text-sm font-medium">MOST POPULAR</div>
                             )}
                             <div className="p-6">
                                 <div className="flex items-center mb-4">
@@ -845,7 +881,7 @@ export default function ManagePlanPage() {
                                 <div className="mt-4 mb-6">
                                     <span className="text-4xl font-bold">${getPrice(plan)}</span>
                                     {plan.price > 0 && (
-                                        <span className="text-gray-600 ml-1">{activeTab === 'monthly' ? '/month' : '/year'}</span>
+                                        <span className="text-gray-600 ml-1">{activeTab === "monthly" ? "/month" : "/year"}</span>
                                     )}
                                 </div>
                                 <div className="mb-6">
@@ -860,24 +896,25 @@ export default function ManagePlanPage() {
                                 </div>
                                 <button
                                     className={`w-full py-3 rounded-lg font-medium transition-colors flex justify-center items-center
-                                        ${processingPayment
-                                        ? 'bg-gray-300 cursor-not-allowed text-gray-600'
-                                        : currentSubscription.plan === plan.id
-                                            ? 'bg-gray-300 cursor-not-allowed text-gray-600'
-                                            : plan.id === 'free'
-                                                ? 'bg-gray-800 hover:bg-gray-900 text-white'
-                                                : 'bg-blue-600 hover:bg-blue-700 text-white'
+                                        ${
+                                        processingPayment
+                                            ? "bg-gray-300 cursor-not-allowed text-gray-600"
+                                            : currentSubscription.plan === plan.id
+                                                ? "bg-gray-300 cursor-not-allowed text-gray-600"
+                                                : plan.id === "free"
+                                                    ? "bg-gray-800 hover:bg-gray-900 text-white"
+                                                    : "bg-blue-600 hover:bg-blue-700 text-white"
                                     }`}
                                     onClick={() => currentSubscription.plan !== plan.id && !processingPayment && handleUpgrade(plan.id)}
                                     disabled={currentSubscription.plan === plan.id || processingPayment}
                                 >
                                     {processingPayment && selectedPlan === plan.id ? (
                                         <span className="flex items-center">
-                                            <Loader2 className="animate-spin h-5 w-5 mr-2" />
-                                            Processing
-                                        </span>
+                      <Loader2 className="animate-spin h-5 w-5 mr-2" />
+                      Processing
+                    </span>
                                     ) : currentSubscription.plan === plan.id ? (
-                                        'Current Plan'
+                                        "Current Plan"
                                     ) : (
                                         <>
                                             Upgrade
@@ -893,9 +930,7 @@ export default function ManagePlanPage() {
                                             ) : (
                                                 <XCircle className="h-5 w-5 text-gray-400 flex-shrink-0 mr-2" />
                                             )}
-                                            <span className={feature.included ? 'text-gray-800' : 'text-gray-500'}>
-                                                {feature.name}
-                                            </span>
+                                            <span className={feature.included ? "text-gray-800" : "text-gray-500"}>{feature.name}</span>
                                         </div>
                                     ))}
                                 </div>
@@ -929,5 +964,6 @@ export default function ManagePlanPage() {
                 type="success"
             />
         </main>
-    );
+    )
 }
+

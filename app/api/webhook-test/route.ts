@@ -1,4 +1,4 @@
-// app/api/webhook-test/route.ts
+// app/api/webhook-test/route.ts - FIXED VERSION
 import { NextResponse } from 'next/server';
 import Stripe from 'stripe';
 import { getAdminSupabase } from '@/lib/admin-supabase';
@@ -96,61 +96,59 @@ export async function POST(request: Request): Promise<NextResponse> {
             console.log(`💾 Preparing to save subscription data:`, subscriptionData);
 
             // Check if user already has a subscription
-            const { data: existingSubscription } = await adminSupabase
+            const { data: existingSubscription, error: checkError } = await adminSupabase
                 .from('user_subscriptions')
                 .select('*')
                 .eq('user_id', userId)
-                .single();
+                .maybeSingle();
 
-            let result;
-
-            if (existingSubscription) {
-                console.log(`🔄 Updating existing subscription for user ${userId}`);
-
-                // Before update - log what we're updating from
-                console.log(`Before update: ${JSON.stringify({
-                    old_plan_id: existingSubscription.plan_id,
-                    old_status: existingSubscription.status,
-                    old_stripe_subscription_id: existingSubscription.stripe_subscription_id,
-                    old_stripe_customer_id: existingSubscription.stripe_customer_id
-                })}`);
-
-                // Update with the full subscription data
-                const { data, error: updateError } = await adminSupabase
-                    .from('user_subscriptions')
-                    .update(subscriptionData)
-                    .eq('user_id', userId)
-                    .select();
-
-                if (updateError) {
-                    console.error(`❌ Error updating subscription: ${updateError.message}`);
-                    return NextResponse.json({ message: updateError.message }, { status: 500 });
-                }
-                result = data;
-
-                // After update - verification
-                console.log(`After update: ${JSON.stringify(data)}`);
-            } else {
-                console.log(`➕ Creating new subscription for user ${userId}`);
-                const { data, error: insertError } = await adminSupabase
-                    .from('user_subscriptions')
-                    .insert({
-                        ...subscriptionData,
-                        created_at: new Date().toISOString()
-                    })
-                    .select();
-
-                if (insertError) {
-                    console.error(`❌ Error inserting subscription: ${insertError.message}`);
-                    return NextResponse.json({ message: insertError.message }, { status: 500 });
-                }
-                result = data;
+            if (checkError) {
+                console.error('Error checking for existing subscription:', checkError);
             }
 
-            // Verify the result
-            if (result && result.length > 0) {
-                console.log(`✅ Subscription successfully saved for user ${userId}, plan ${planId}`);
-                console.log(`Result: ${JSON.stringify(result)}`);
+            try {
+                if (existingSubscription) {
+                    console.log(`🔄 Updating existing subscription for user ${userId}`);
+
+                    // Before update - log what we're updating from
+                    console.log(`Before update: ${JSON.stringify({
+                        old_plan_id: existingSubscription.plan_id,
+                        old_status: existingSubscription.status,
+                        old_stripe_subscription_id: existingSubscription.stripe_subscription_id,
+                        old_stripe_customer_id: existingSubscription.stripe_customer_id
+                    })}`);
+
+                    // Update with the full subscription data
+                    const { data, error: updateError } = await adminSupabase
+                        .from('user_subscriptions')
+                        .update(subscriptionData)
+                        .eq('user_id', userId)
+                        .select();
+
+                    if (updateError) {
+                        console.error(`❌ Error updating subscription: ${updateError.message}`);
+                        return NextResponse.json({ message: updateError.message }, { status: 500 });
+                    }
+
+                    console.log(`After update: ${JSON.stringify(data)}`);
+
+                } else {
+                    console.log(`➕ Creating new subscription for user ${userId}`);
+                    const { data, error: insertError } = await adminSupabase
+                        .from('user_subscriptions')
+                        .insert({
+                            ...subscriptionData,
+                            created_at: new Date().toISOString()
+                        })
+                        .select();
+
+                    if (insertError) {
+                        console.error(`❌ Error inserting subscription: ${insertError.message}`);
+                        return NextResponse.json({ message: insertError.message }, { status: 500 });
+                    }
+
+                    console.log(`Created subscription: ${JSON.stringify(data)}`);
+                }
 
                 // Double-check by fetching again
                 const { data: verifyData, error: verifyError } = await adminSupabase
@@ -163,9 +161,24 @@ export async function POST(request: Request): Promise<NextResponse> {
                     console.error(`❌ Error verifying update: ${verifyError.message}`);
                 } else {
                     console.log(`✅ Verification - database now has:`, verifyData);
+
+                    if (verifyData.plan_id !== planId) {
+                        console.error(`⚠️ CRITICAL ERROR: Plan not updated correctly. Expected ${planId}, got ${verifyData.plan_id}`);
+                    } else {
+                        console.log(`✅ SUCCESS: Plan correctly updated to ${planId}`);
+                    }
                 }
-            } else {
-                console.error(`⚠️ No error, but no result returned when saving subscription`);
+
+                return NextResponse.json({
+                    success: true,
+                    message: `Plan updated to ${planId}`
+                });
+
+            } catch (dbError) {
+                console.error('❌ Database operation error:', dbError);
+                return NextResponse.json({
+                    error: dbError instanceof Error ? dbError.message : 'Unknown error'
+                }, { status: 500 });
             }
         }
 
