@@ -96,7 +96,7 @@ export async function POST(request: Request): Promise<NextResponse> {
             console.log(`💾 Preparing to save subscription data:`, subscriptionData);
 
             // Check if user already has a subscription
-            const { data: existingSubscription, error: fetchError } = await adminSupabase
+            const { data: existingSubscription } = await adminSupabase
                 .from('user_subscriptions')
                 .select('*')
                 .eq('user_id', userId)
