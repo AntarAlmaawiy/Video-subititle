@@ -438,7 +438,37 @@ export default function ManagePlanPage() {
         return attemptRefresh()
     }, [session?.user?.id, fetchUserData])
 
-    // Check if returning from Stripe
+    // Define this useCallback before the useEffect
+    const checkDirectSubscriptionStatus = useCallback(async () => {
+        try {
+            if (!session?.user?.id) {
+                console.log("User not authenticated, cannot check subscription status");
+                return;
+            }
+
+            // Direct database query first
+            const { data, error } = await supabase
+                .from('user_subscriptions')
+                .select('*')
+                .eq('user_id', session.user.id)
+                .single();
+
+            if (!error && data) {
+                setCurrentSubscription(prevState => ({
+                    ...prevState,
+                    plan: data.plan_id,
+                    status: data.status
+                }));
+            }
+
+            // Then do the normal fetch
+            await fetchUserData(true);
+        } catch (err) {
+            console.error('Error checking subscription:', err);
+        }
+    }, [session?.user?.id, fetchUserData]);
+
+// Now replace your existing useEffect with this one
     useEffect(() => {
         if (typeof window !== "undefined") {
             const urlParams = new URLSearchParams(window.location.search)
@@ -471,6 +501,9 @@ export default function ManagePlanPage() {
 
                     // Give the webhook a chance to process
                     setTimeout(checkSubscription, 2000)
+
+                    // Also run our direct check after a bit more time
+                    setTimeout(checkDirectSubscriptionStatus, 4000)
                 } else {
                     // Save the success state and check after authentication
                     localStorage.setItem("pendingSubscriptionCheck", "true")
@@ -480,7 +513,7 @@ export default function ManagePlanPage() {
                 window.history.replaceState({}, document.title, window.location.pathname)
             }
         }
-    }, [status, session?.user?.id, refreshSubscription])
+    }, [status, session?.user?.id, refreshSubscription, checkDirectSubscriptionStatus])
 
     // Check localStorage for pending checkout
     const checkPendingCheckout = useCallback(async () => {

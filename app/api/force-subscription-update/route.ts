@@ -22,6 +22,7 @@ export async function GET() {
         const adminSupabase = getAdminSupabase();
         console.log(`Force sync requested for user: ${session.user.id}`);
 
+
         // Get current subscription
         const { data: currentSub, error: subError } = await adminSupabase
             .from('user_subscriptions')
