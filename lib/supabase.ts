@@ -38,7 +38,6 @@ export const signUpWithEmail = async (email: string, password: string, username:
 };
 
 // Get user's subscription plan from database
-// In lib/supabase.ts - replace getUserSubscription
 export const getUserSubscription = async (userId?: string) => {
     try {
         if (!userId) {
@@ -48,40 +47,26 @@ export const getUserSubscription = async (userId?: string) => {
 
         console.log(`Fetching subscription for user: ${userId}`);
 
-        // First try a simpler query with the public client
+        // Use a more direct query approach
         const { data: subData, error: subError } = await supabase
             .from('user_subscriptions')
             .select('*')
             .eq('user_id', userId)
-            .single();
+            .select(`
+                *,
+                plan_details:subscription_plans(*)
+            `)
+            .maybeSingle();
+
+        console.log('Subscription query result:', { data: subData, error: subError });
 
         if (!subError && subData) {
             console.log('Found subscription record:', subData);
-
-            try {
-                // Get plan details in a separate query
-                const { data: planData, error: planError } = await supabase
-                    .from('subscription_plans')
-                    .select('*')
-                    .eq('id', subData.plan_id)
-                    .single();
-
-                if (!planError && planData) {
-                    console.log('Found plan details:', planData);
-                    return {
-                        ...subData,
-                        plan_details: planData
-                    };
-                }
-            } catch (planFetchError) {
-                console.error('Error fetching plan details:', planFetchError);
-            }
-
             return subData;
         }
 
-        // Return free plan defaults if no subscription found
-        console.log('No subscription found, returning default free plan');
+        // If we reach here, either there was an error or no subscription was found
+        console.log(`No subscription found for user ${userId}, returning default free plan`);
         return getDefaultSubscription();
     } catch (error) {
         console.error('Error in getUserSubscription:', error);
