@@ -446,7 +446,28 @@ export default function ManagePlanPage() {
                 return;
             }
 
-            // Direct database query first
+            // First, try the direct endpoint
+            try {
+                const response = await fetch("/api/user-subscription?t=" + Date.now());
+                if (response.ok) {
+                    const data = await response.json();
+                    console.log("Subscription data from API:", data);
+
+                    if (data.subscription) {
+                        // Update UI with retrieved data
+                        setCurrentSubscription(prevState => ({
+                            ...prevState,
+                            plan: data.subscription.plan_id || prevState.plan,
+                            status: data.subscription.status || prevState.status,
+                            nextBillingDate: data.subscription.next_billing_date || prevState.nextBillingDate
+                        }));
+                    }
+                }
+            } catch (apiErr) {
+                console.error("Error with API check:", apiErr);
+            }
+
+            // Then also try direct database query as backup
             const { data, error } = await supabase
                 .from('user_subscriptions')
                 .select('*')
@@ -454,14 +475,16 @@ export default function ManagePlanPage() {
                 .single();
 
             if (!error && data) {
+                console.log("Subscription data from direct DB query:", data);
                 setCurrentSubscription(prevState => ({
                     ...prevState,
-                    plan: data.plan_id,
-                    status: data.status
+                    plan: data.plan_id || prevState.plan,
+                    status: data.status || prevState.status,
+                    nextBillingDate: data.next_billing_date || prevState.nextBillingDate
                 }));
             }
 
-            // Then do the normal fetch
+            // Then do the normal fetch which will update usage stats
             await fetchUserData(true);
         } catch (err) {
             console.error('Error checking subscription:', err);
