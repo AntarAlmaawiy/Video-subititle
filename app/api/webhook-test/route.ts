@@ -1,4 +1,4 @@
-// app/api/webhook-test/route.ts
+// app/api/webhook-test/route.ts - UPDATED VERSION
 import { NextResponse } from 'next/server';
 import Stripe from 'stripe';
 import { getAdminSupabase } from '@/lib/admin-supabase';
@@ -68,9 +68,27 @@ export async function POST(request: Request): Promise<NextResponse> {
             }
 
             try {
+                // First check if user exists in profiles table
+                console.log(`🔍 Checking if user ${userId} exists in profiles table`);
+                const { error: profileError } = await adminSupabase
+                    .from('profiles')
+                    .select('id')
+                    .eq('id', userId)
+                    .single();
 
-                // We're now directly linking to auth.users, no profile check needed
-                console.log(`🔍 Using direct link to auth.users for user ${userId}`);
+                if (profileError) {
+                    console.error('❌ Error checking user profile:', profileError);
+                    console.log('⚠️ User may not exist in profiles table, but proceeding anyway');
+                }
+
+                // Next, check if the user already has a subscription record
+                console.log(`🔍 Checking if user ${userId} already has a subscription record`);
+                const { data: existingSubscription } = await adminSupabase
+                    .from('user_subscriptions')
+                    .select('id, plan_id, status')
+                    .eq('user_id', userId)
+                    .single();
+
                 // Get subscription details from Stripe
                 console.log(`🔍 Retrieving subscription ${subscriptionId} from Stripe...`);
                 const subscription = await stripe.subscriptions.retrieve(subscriptionId);
@@ -81,7 +99,7 @@ export async function POST(request: Request): Promise<NextResponse> {
                     current_period_end: subscription.current_period_end
                 });
 
-                // Update or create user subscription in database
+                // Prepare subscription data
                 const subscriptionData = {
                     user_id: userId,
                     plan_id: planId,
@@ -90,45 +108,111 @@ export async function POST(request: Request): Promise<NextResponse> {
                     stripe_customer_id: customerId,
                     billing_cycle: billingCycle,
                     next_billing_date: new Date(subscription.current_period_end * 1000).toISOString().split('T')[0],
-                    updated_at: new Date().toISOString(),
-                    created_at: new Date().toISOString()
+                    updated_at: new Date().toISOString()
                 };
 
-                console.log(`📋 Updating subscription in database with data:`, JSON.stringify(subscriptionData, null, 2));
+                let result;
 
-                const { data, error } = await adminSupabase
-                    .from('user_subscriptions')
-                    .upsert(subscriptionData, { onConflict: 'user_id' })
-                    .select();
+                if (existingSubscription) {
+                    console.log(`🔄 Updating existing subscription with ID: ${existingSubscription.id}`);
+                    // Update using the record ID instead of relying on user_id
+                    const { data, error } = await adminSupabase
+                        .from('user_subscriptions')
+                        .update(subscriptionData)
+                        .eq('id', existingSubscription.id)
+                        .select();
 
-                if (error) {
-                    console.error('❌ Database update error:', error);
-                    console.error('❌ Error details:', {
-                        code: error.code,
-                        message: error.message,
-                        details: error.details,
-                        hint: error.hint
-                    });
+                    if (error) {
+                        console.error('❌ Error updating subscription by ID:', error);
+                        // Fallback to user_id update
+                        console.log('⚠️ Falling back to user_id update');
+                        const { data: fallbackData, error: fallbackError } = await adminSupabase
+                            .from('user_subscriptions')
+                            .update(subscriptionData)
+                            .eq('user_id', userId)
+                            .select();
 
-                    // Special handling for foreign key constraint violation
-                    if (error.code === '23503') { // Foreign key violation
-                        console.error('❌ This is a foreign key constraint violation. User likely does not exist in the profiles table.');
-
-                        // Try to log detailed information about the user
-                        console.log('🔍 Attempting to get auth user info');
-                        const { data: authUser, error: authError } = await adminSupabase.auth.admin.getUserById(userId);
-
-                        if (authError) {
-                            console.error('❌ Error fetching auth user:', authError);
-                        } else {
-                            console.log('📋 Auth user info:', authUser);
+                        if (fallbackError) {
+                            console.error('❌ Fallback update also failed:', fallbackError);
+                            return NextResponse.json({ message: 'Database update failed' }, { status: 200 });
                         }
+                        result = fallbackData;
+                    } else {
+                        result = data;
                     }
+                } else {
+                    console.log(`🆕 Creating new subscription for user ${userId}`);
+                    // Add created_at for new records
+                    const newSubscriptionData = {
+                        ...subscriptionData,
+                        created_at: new Date().toISOString()
+                    };
 
-                    return NextResponse.json({ message: 'Database update failed' }, { status: 200 });
+                    const { data, error } = await adminSupabase
+                        .from('user_subscriptions')
+                        .insert(newSubscriptionData)
+                        .select();
+
+                    if (error) {
+                        console.error('❌ Error creating subscription:', error);
+                        console.error('❌ Error details:', {
+                            code: error.code,
+                            message: error.message,
+                            details: error.details,
+                            hint: error.hint
+                        });
+
+                        // Special handling for foreign key constraint violation
+                        if (error.code === '23503') {
+                            console.error('❌ Foreign key constraint violation. Attempting to create profile first.');
+
+                            // Try to get auth user info
+                            const { data: authUser } = await adminSupabase.auth.admin.getUserById(userId);
+
+                            if (authUser?.user) {
+                                console.log('✅ Found auth user:', authUser.user);
+
+                                // Create a profile record
+                                const { error: profileCreateError } = await adminSupabase
+                                    .from('profiles')
+                                    .insert({
+                                        id: userId,
+                                        username: authUser.user.email?.split('@')[0] || `user_${userId.slice(0, 8)}`,
+                                        email: authUser.user.email || `user_${userId.slice(0, 8)}@example.com`,
+                                        created_at: new Date().toISOString(),
+                                        updated_at: new Date().toISOString()
+                                    });
+
+                                if (profileCreateError) {
+                                    console.error('❌ Failed to create profile:', profileCreateError);
+                                } else {
+                                    console.log('✅ Created profile record, retrying subscription insert');
+
+                                    // Try insert again
+                                    const { data: retryData, error: retryError } = await adminSupabase
+                                        .from('user_subscriptions')
+                                        .insert(newSubscriptionData)
+                                        .select();
+
+                                    if (retryError) {
+                                        console.error('❌ Retry insert also failed:', retryError);
+                                    } else {
+                                        console.log('✅ Retry insert succeeded');
+                                        result = retryData;
+                                    }
+                                }
+                            }
+                        }
+
+                        if (!result) {
+                            return NextResponse.json({ message: 'Database update failed' }, { status: 200 });
+                        }
+                    } else {
+                        result = data;
+                    }
                 }
 
-                console.log('✅ Subscription updated in database:', data);
+                console.log('✅ Subscription updated in database:', result);
 
                 // Double-check the database to ensure it's updated
                 const { data: checkData, error: checkError } = await adminSupabase
@@ -142,6 +226,12 @@ export async function POST(request: Request): Promise<NextResponse> {
                 } else {
                     console.log('📋 Verified subscription in database:', checkData);
                 }
+
+                return NextResponse.json({
+                    success: true,
+                    message: 'Subscription updated',
+                    data: result
+                });
             } catch (err) {
                 console.error('❌ Error processing checkout session:', err);
                 return NextResponse.json({ message: 'Error processing checkout' }, { status: 200 });

@@ -66,8 +66,29 @@ export async function POST(request: Request): Promise<NextResponse> {
             }
 
             try {
-                console.log(`🔍 Using direct link to auth.users for user ${userId}`);
+                // First check if user exists in profiles table
+                console.log(`🔍 Checking if user ${userId} exists in profiles table`);
+                const { error: profileError } = await adminSupabase
+                    .from('profiles')
+                    .select('id')
+                    .eq('id', userId)
+                    .single();
+
+                if (profileError) {
+                    console.error('❌ Error checking user profile:', profileError);
+                    console.log('⚠️ User may not exist in profiles table, but proceeding anyway');
+                }
+
+                // Next, check if the user already has a subscription record
+                console.log(`🔍 Checking if user ${userId} already has a subscription record`);
+                const { data: existingSubscription } = await adminSupabase
+                    .from('user_subscriptions')
+                    .select('id, plan_id, status')
+                    .eq('user_id', userId)
+                    .single();
+
                 // Get subscription details from Stripe
+                console.log(`🔍 Retrieving subscription ${subscriptionId} from Stripe...`);
                 const subscription = await stripe.subscriptions.retrieve(subscriptionId);
 
                 console.log(`📋 Retrieved subscription from Stripe:`, {
@@ -76,7 +97,7 @@ export async function POST(request: Request): Promise<NextResponse> {
                     current_period_end: subscription.current_period_end
                 });
 
-                // Update or create user subscription in database
+                // Prepare subscription data
                 const subscriptionData = {
                     user_id: userId,
                     plan_id: planId,
@@ -85,23 +106,111 @@ export async function POST(request: Request): Promise<NextResponse> {
                     stripe_customer_id: customerId,
                     billing_cycle: billingCycle,
                     next_billing_date: new Date(subscription.current_period_end * 1000).toISOString().split('T')[0],
-                    updated_at: new Date().toISOString(),
-                    created_at: new Date().toISOString()
+                    updated_at: new Date().toISOString()
                 };
 
-                console.log(`📋 Updating subscription in database:`, subscriptionData);
+                let result;
 
-                const { data, error } = await adminSupabase
-                    .from('user_subscriptions')
-                    .upsert(subscriptionData, { onConflict: 'user_id' })
-                    .select();
+                if (existingSubscription) {
+                    console.log(`🔄 Updating existing subscription with ID: ${existingSubscription.id}`);
+                    // Update using the record ID instead of relying on user_id
+                    const { data, error } = await adminSupabase
+                        .from('user_subscriptions')
+                        .update(subscriptionData)
+                        .eq('id', existingSubscription.id)
+                        .select();
 
-                if (error) {
-                    console.error('❌ Database update error:', error);
-                    return NextResponse.json({ message: 'Database update failed' }, { status: 200 });
+                    if (error) {
+                        console.error('❌ Error updating subscription by ID:', error);
+                        // Fallback to user_id update
+                        console.log('⚠️ Falling back to user_id update');
+                        const { data: fallbackData, error: fallbackError } = await adminSupabase
+                            .from('user_subscriptions')
+                            .update(subscriptionData)
+                            .eq('user_id', userId)
+                            .select();
+
+                        if (fallbackError) {
+                            console.error('❌ Fallback update also failed:', fallbackError);
+                            return NextResponse.json({ message: 'Database update failed' }, { status: 200 });
+                        }
+                        result = fallbackData;
+                    } else {
+                        result = data;
+                    }
+                } else {
+                    console.log(`🆕 Creating new subscription for user ${userId}`);
+                    // Add created_at for new records
+                    const newSubscriptionData = {
+                        ...subscriptionData,
+                        created_at: new Date().toISOString()
+                    };
+
+                    const { data, error } = await adminSupabase
+                        .from('user_subscriptions')
+                        .insert(newSubscriptionData)
+                        .select();
+
+                    if (error) {
+                        console.error('❌ Error creating subscription:', error);
+                        console.error('❌ Error details:', {
+                            code: error.code,
+                            message: error.message,
+                            details: error.details,
+                            hint: error.hint
+                        });
+
+                        // Special handling for foreign key constraint violation
+                        if (error.code === '23503') {
+                            console.error('❌ Foreign key constraint violation. Attempting to create profile first.');
+
+                            // Try to get auth user info
+                            const { data: authUser } = await adminSupabase.auth.admin.getUserById(userId);
+
+                            if (authUser?.user) {
+                                console.log('✅ Found auth user:', authUser.user);
+
+                                // Create a profile record
+                                const { error: profileCreateError } = await adminSupabase
+                                    .from('profiles')
+                                    .insert({
+                                        id: userId,
+                                        username: authUser.user.email?.split('@')[0] || `user_${userId.slice(0, 8)}`,
+                                        email: authUser.user.email || `user_${userId.slice(0, 8)}@example.com`,
+                                        created_at: new Date().toISOString(),
+                                        updated_at: new Date().toISOString()
+                                    });
+
+                                if (profileCreateError) {
+                                    console.error('❌ Failed to create profile:', profileCreateError);
+                                } else {
+                                    console.log('✅ Created profile record, retrying subscription insert');
+
+                                    // Try insert again
+                                    const { data: retryData, error: retryError } = await adminSupabase
+                                        .from('user_subscriptions')
+                                        .insert(newSubscriptionData)
+                                        .select();
+
+                                    if (retryError) {
+                                        console.error('❌ Retry insert also failed:', retryError);
+                                    } else {
+                                        console.log('✅ Retry insert succeeded');
+                                        result = retryData;
+                                    }
+                                }
+                            }
+                        }
+
+                        if (!result) {
+                            return NextResponse.json({ message: 'Database update failed' }, { status: 200 });
+                        }
+                    } else {
+                        result = data;
+                    }
                 }
 
-                console.log('✅ Subscription updated in database:', data);
+                console.log('✅ Subscription updated in database:', result);
 
                 // Double-check the database to ensure it's updated
                 const { data: checkData, error: checkError } = await adminSupabase
@@ -130,7 +239,7 @@ export async function POST(request: Request): Promise<NextResponse> {
                 // First try to find the user from our database using subscription ID
                 const { data: subData, error: subError } = await adminSupabase
                     .from('user_subscriptions')
-                    .select('user_id, plan_id')
+                    .select('id, user_id, plan_id')
                     .eq('stripe_subscription_id', subscription.id)
                     .single();
 
@@ -149,7 +258,7 @@ export async function POST(request: Request): Promise<NextResponse> {
                 // Determine if subscription is being canceled at period end
                 const status = subscription.cancel_at_period_end ? 'canceled' : subscription.status;
 
-                // Update the subscription in database
+                // Update the subscription in database by ID (this is the key improvement)
                 const { data, error } = await adminSupabase
                     .from('user_subscriptions')
                     .update({
@@ -157,15 +266,31 @@ export async function POST(request: Request): Promise<NextResponse> {
                         next_billing_date: new Date(subscription.current_period_end * 1000).toISOString().split('T')[0],
                         updated_at: new Date().toISOString()
                     })
-                    .eq('user_id', subData.user_id)
+                    .eq('id', subData.id) // Using record ID instead of user_id
                     .select();
 
                 if (error) {
-                    console.error('❌ Error updating subscription status:', error);
-                    return NextResponse.json({ message: 'Error updating subscription' }, { status: 200 });
-                }
+                    console.error('❌ Error updating subscription status by ID:', error);
+                    // Fall back to updating by user_id
+                    const { data: fallbackData, error: fallbackError } = await adminSupabase
+                        .from('user_subscriptions')
+                        .update({
+                            status: status,
+                            next_billing_date: new Date(subscription.current_period_end * 1000).toISOString().split('T')[0],
+                            updated_at: new Date().toISOString()
+                        })
+                        .eq('user_id', subData.user_id)
+                        .select();
 
-                console.log('✅ Subscription status updated in database:', data);
+                    if (fallbackError) {
+                        console.error('❌ Error updating subscription status by user_id:', fallbackError);
+                        return NextResponse.json({ message: 'Error updating subscription' }, { status: 200 });
+                    }
+
+                    console.log('✅ Subscription status updated in database (via user_id fallback):', fallbackData);
+                } else {
+                    console.log('✅ Subscription status updated in database:', data);
+                }
             } catch (err) {
                 console.error('❌ Error processing subscription update:', err);
                 return NextResponse.json({ message: 'Error processing update' }, { status: 200 });
@@ -180,7 +305,7 @@ export async function POST(request: Request): Promise<NextResponse> {
                 // Find the user from our database using subscription ID
                 const { data: subData, error: subError } = await adminSupabase
                     .from('user_subscriptions')
-                    .select('user_id')
+                    .select('id, user_id')
                     .eq('stripe_subscription_id', subscription.id)
                     .single();
 
@@ -189,7 +314,7 @@ export async function POST(request: Request): Promise<NextResponse> {
                     return NextResponse.json({ message: 'User not found for subscription' }, { status: 200 });
                 }
 
-                // Downgrade to free plan
+                // Downgrade to free plan - using ID for update
                 const { data, error } = await adminSupabase
                     .from('user_subscriptions')
                     .update({
@@ -197,15 +322,31 @@ export async function POST(request: Request): Promise<NextResponse> {
                         status: 'canceled',
                         updated_at: new Date().toISOString()
                     })
-                    .eq('user_id', subData.user_id)
+                    .eq('id', subData.id) // Use record ID instead of user_id
                     .select();
 
                 if (error) {
-                    console.error('❌ Error downgrading to free plan:', error);
-                    return NextResponse.json({ message: 'Error downgrading subscription' }, { status: 200 });
-                }
+                    console.error('❌ Error downgrading to free plan by ID:', error);
+                    // Fall back to updating by user_id
+                    const { data: fallbackData, error: fallbackError } = await adminSupabase
+                        .from('user_subscriptions')
+                        .update({
+                            plan_id: 'free',
+                            status: 'canceled',
+                            updated_at: new Date().toISOString()
+                        })
+                        .eq('user_id', subData.user_id)
+                        .select();
 
-                console.log('✅ User downgraded to free plan:', data);
+                    if (fallbackError) {
+                        console.error('❌ Error downgrading by user_id:', fallbackError);
+                        return NextResponse.json({ message: 'Error downgrading subscription' }, { status: 200 });
+                    }
+
+                    console.log('✅ User downgraded to free plan (via user_id fallback):', fallbackData);
+                } else {
+                    console.log('✅ User downgraded to free plan:', data);
+                }
             } catch (err) {
                 console.error('❌ Error processing subscription deletion:', err);
                 return NextResponse.json({ message: 'Error processing deletion' }, { status: 200 });
