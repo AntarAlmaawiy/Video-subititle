@@ -37,7 +37,7 @@ export const signUpWithEmail = async (email: string, password: string, username:
     return data;
 };
 
-// Get user's subscription plan from database
+// lib/supabase.ts - update the getUserSubscription function
 export const getUserSubscription = async (userId?: string) => {
     try {
         if (!userId) {
@@ -47,15 +47,14 @@ export const getUserSubscription = async (userId?: string) => {
 
         console.log(`Fetching subscription for user: ${userId}`);
 
-        // Use a more direct query approach
+        // Query for the user's subscription
         const { data: subData, error: subError } = await supabase
             .from('user_subscriptions')
-            .select('*')
-            .eq('user_id', userId)
             .select(`
-                *,
-                plan_details:subscription_plans(*)
-            `)
+        *,
+        plan:plan_id(*)
+      `)
+            .eq('user_id', userId)
             .maybeSingle();
 
         console.log('Subscription query result:', { data: subData, error: subError });
@@ -63,6 +62,26 @@ export const getUserSubscription = async (userId?: string) => {
         if (!subError && subData) {
             console.log('Found subscription record:', subData);
             return subData;
+        }
+
+        // If no subscription found, create a free one
+        try {
+            const { data: newSub, error: insertError } = await supabase
+                .from('user_subscriptions')
+                .insert({
+                    user_id: userId,
+                    plan_id: 'free',
+                    status: 'active',
+                    next_billing_date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+                })
+                .select();
+
+            if (!insertError && newSub?.[0]) {
+                console.log('Created new free subscription:', newSub[0]);
+                return newSub[0];
+            }
+        } catch (insertErr) {
+            console.error('Error creating subscription:', insertErr);
         }
 
         // If we reach here, either there was an error or no subscription was found

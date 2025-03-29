@@ -1,4 +1,4 @@
-// app/api/webhook-test/route.ts - UPDATED VERSION
+// app/api/webhook-test/route.ts
 import { NextResponse } from 'next/server';
 import Stripe from 'stripe';
 import { getAdminSupabase } from '@/lib/admin-supabase';
@@ -77,8 +77,34 @@ export async function POST(request: Request): Promise<NextResponse> {
                     .single();
 
                 if (profileError) {
-                    console.error('❌ Error checking user profile:', profileError);
-                    console.log('⚠️ User may not exist in profiles table, but proceeding anyway');
+                    console.log('⚠️ User profile not found, creating it...');
+
+                    // Try to get user info from auth session metadata
+                    const userEmail = session.customer_details?.email ||
+                        session.metadata?.userEmail ||
+                        'user@example.com';
+
+                    const userName = session.customer_details?.name ||
+                        session.metadata?.userName ||
+                        userEmail.split('@')[0];
+
+                    // Create profile
+                    const { error: createProfileError } = await adminSupabase
+                        .from('profiles')
+                        .insert({
+                            id: userId,
+                            username: userName || `user_${userId.slice(0, 8)}`,
+                            email: userEmail,
+                            created_at: new Date().toISOString(),
+                            updated_at: new Date().toISOString()
+                        });
+
+                    if (createProfileError) {
+                        console.error('❌ Error creating profile:', createProfileError);
+                        return NextResponse.json({ message: 'Failed to create user profile' }, { status: 200 });
+                    }
+
+                    console.log('✅ Created new profile for user');
                 }
 
                 // Next, check if the user already has a subscription record
@@ -162,51 +188,7 @@ export async function POST(request: Request): Promise<NextResponse> {
                             hint: error.hint
                         });
 
-                        // Special handling for foreign key constraint violation
-                        if (error.code === '23503') {
-                            console.error('❌ Foreign key constraint violation. Attempting to create profile first.');
-
-                            // Try to get auth user info
-                            const { data: authUser } = await adminSupabase.auth.admin.getUserById(userId);
-
-                            if (authUser?.user) {
-                                console.log('✅ Found auth user:', authUser.user);
-
-                                // Create a profile record
-                                const { error: profileCreateError } = await adminSupabase
-                                    .from('profiles')
-                                    .insert({
-                                        id: userId,
-                                        username: authUser.user.email?.split('@')[0] || `user_${userId.slice(0, 8)}`,
-                                        email: authUser.user.email || `user_${userId.slice(0, 8)}@example.com`,
-                                        created_at: new Date().toISOString(),
-                                        updated_at: new Date().toISOString()
-                                    });
-
-                                if (profileCreateError) {
-                                    console.error('❌ Failed to create profile:', profileCreateError);
-                                } else {
-                                    console.log('✅ Created profile record, retrying subscription insert');
-
-                                    // Try insert again
-                                    const { data: retryData, error: retryError } = await adminSupabase
-                                        .from('user_subscriptions')
-                                        .insert(newSubscriptionData)
-                                        .select();
-
-                                    if (retryError) {
-                                        console.error('❌ Retry insert also failed:', retryError);
-                                    } else {
-                                        console.log('✅ Retry insert succeeded');
-                                        result = retryData;
-                                    }
-                                }
-                            }
-                        }
-
-                        if (!result) {
-                            return NextResponse.json({ message: 'Database update failed' }, { status: 200 });
-                        }
+                        return NextResponse.json({ message: 'Database update failed' }, { status: 200 });
                     } else {
                         result = data;
                     }
