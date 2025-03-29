@@ -68,20 +68,9 @@ export async function POST(request: Request): Promise<NextResponse> {
             }
 
             try {
-                // SIMPLIFIED: Just verify user exists
-                console.log(`🔍 Verifying user ${userId} exists in profiles table...`);
-                const { error: userCheckError } = await adminSupabase
-                    .from('profiles')
-                    .select('id')
-                    .eq('id', userId)
-                    .single();
 
-                if (userCheckError && userCheckError.code !== 'PGRST116') {
-                    // Only log non-existence errors, don't try to create
-                    console.error('❌ Error checking for user profile:', userCheckError);
-                    return NextResponse.json({ message: 'Error checking user profile' }, { status: 200 });
-                }
-
+                // We're now directly linking to auth.users, no profile check needed
+                console.log(`🔍 Using direct link to auth.users for user ${userId}`);
                 // Get subscription details from Stripe
                 console.log(`🔍 Retrieving subscription ${subscriptionId} from Stripe...`);
                 const subscription = await stripe.subscriptions.retrieve(subscriptionId);
