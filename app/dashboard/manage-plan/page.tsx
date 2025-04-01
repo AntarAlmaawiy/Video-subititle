@@ -614,17 +614,27 @@ export default function ManagePlanPage() {
     }, [status, router, session?.user?.id, fetchUserData, loadAttempted, checkPendingCheckout])
 
     // Handle checkout with Stripe
+    // Improved handleUpgrade function for manage-plan/page.tsx
     const handleUpgrade = async (planId: string) => {
         if (!session?.user?.id) {
-            router.push("/signin")
-            return
+            router.push("/signin");
+            return;
         }
 
-        setSelectedPlan(planId)
-        setProcessingPayment(true)
-        setError(null)
+        // Debug logging
+        console.log("Starting upgrade process:");
+        console.log(`Plan ID: ${planId}`);
+        console.log(`Test Mode: ${isTestMode}`);
+        console.log(`Billing Cycle: ${activeTab}`);
+
+        setSelectedPlan(planId);
+        setProcessingPayment(true);
+        setError(null);
 
         try {
+            // Always ensure the test mode is saved to localStorage
+            localStorage.setItem("checkoutTestMode", isTestMode ? "true" : "false");
+
             // Create a checkout session with Stripe
             const response = await fetch("/api/create-checkout-session", {
                 method: "POST",
@@ -634,30 +644,40 @@ export default function ManagePlanPage() {
                 body: JSON.stringify({
                     planId: planId,
                     billingCycle: activeTab,
-                    testMode: isTestMode, // Add the test mode flag
+                    testMode: isTestMode,
+                    timestamp: Date.now(), // Add timestamp to prevent caching issues
                 }),
-            })
+            });
+
+            console.log("API response status:", response.status);
 
             if (!response.ok) {
-                const errorData = await response.json()
-                throw new Error(errorData.message || "Failed to create checkout session")
+                const errorData = await response.json();
+                console.error("Checkout error response:", errorData);
+                throw new Error(errorData.message || "Failed to create checkout session");
             }
 
-            const { sessionUrl } = await response.json()
+            const data = await response.json();
+            console.log("Checkout session created successfully:", data.sessionUrl ? "URL received" : "No URL");
+
+            if (!data.sessionUrl) {
+                throw new Error("No checkout URL returned from server");
+            }
 
             // Store checkout info in localStorage for verification on return
-            localStorage.setItem("pendingCheckout", "true")
-            localStorage.setItem("checkoutTime", Date.now().toString())
-            localStorage.setItem("checkoutTestMode", isTestMode ? "true" : "false") // Store test mode state
+            localStorage.setItem("pendingCheckout", "true");
+            localStorage.setItem("checkoutTime", Date.now().toString());
+            localStorage.setItem("checkoutPlanId", planId);
+            localStorage.setItem("checkoutBillingCycle", activeTab);
 
-            // Redirect to Stripe Checkout
-            window.location.href = sessionUrl
-        } catch (err: unknown) {
-            console.error("Checkout error:", err)
-            toast.error(err instanceof Error ? err.message : "Failed to process checkout")
-            setProcessingPayment(false)
+            console.log("Redirecting to Stripe checkout...");
+            window.location.href = data.sessionUrl;
+        } catch (err) {
+            console.error("Checkout error:", err);
+            toast.error(err instanceof Error ? err.message : "Failed to process checkout");
+            setProcessingPayment(false);
         }
-    }
+    };
 
     // Show cancel confirmation modal
     const handleCancel = async () => {

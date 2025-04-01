@@ -1,5 +1,5 @@
 // components/TestModeToggle.tsx
-import React from 'react';
+import React, { useEffect } from 'react';
 
 interface TestModeToggleProps {
     isTestMode: boolean;
@@ -7,6 +7,21 @@ interface TestModeToggleProps {
 }
 
 const TestModeToggle: React.FC<TestModeToggleProps> = ({ isTestMode, setIsTestMode }) => {
+    useEffect(() => {
+        // Load test mode state from localStorage on component mount
+        const savedTestMode = localStorage.getItem('stripeModeTest') === 'true';
+        if (savedTestMode !== isTestMode) {
+            setIsTestMode(savedTestMode);
+        }
+    }, []);
+
+    const handleTestModeToggle = () => {
+        const newMode = !isTestMode;
+        setIsTestMode(newMode);
+        localStorage.setItem('stripeModeTest', newMode ? 'true' : 'false');
+        console.log(`Test mode ${newMode ? 'enabled' : 'disabled'}`);
+    };
+
     return (
         <div className="mb-4 p-3 bg-yellow-100 border border-yellow-300 rounded-md shadow-sm">
             <div className="flex items-center justify-between">
@@ -17,7 +32,7 @@ const TestModeToggle: React.FC<TestModeToggleProps> = ({ isTestMode, setIsTestMo
                             name="testMode"
                             id="testMode"
                             checked={isTestMode}
-                            onChange={() => setIsTestMode(!isTestMode)}
+                            onChange={handleTestModeToggle}
                             className="absolute block w-6 h-6 bg-white border-4 rounded-full appearance-none cursor-pointer checked:right-0 checked:border-green-500 focus:outline-none duration-200"
                         />
                         <label
@@ -28,8 +43,8 @@ const TestModeToggle: React.FC<TestModeToggleProps> = ({ isTestMode, setIsTestMo
                         ></label>
                     </div>
                     <span className="font-medium text-gray-700">
-            {isTestMode ? 'Test Mode ON' : 'Test Mode OFF'}
-          </span>
+                        {isTestMode ? 'Test Mode ON' : 'Test Mode OFF'}
+                    </span>
                 </div>
                 <div className="text-xs text-gray-500">
                     {isTestMode

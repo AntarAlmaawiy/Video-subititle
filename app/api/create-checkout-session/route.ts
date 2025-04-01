@@ -2,7 +2,7 @@
 import { NextResponse } from 'next/server';
 import Stripe from 'stripe';
 import { auth } from "@/app/api/auth/[...nextauth]/route";
-import { adminSupabase } from '@/lib/admin-supabase'; // Import the admin client
+import { adminSupabase } from '@/lib/admin-supabase';
 
 // Define interface for plan types
 interface Plan {
@@ -10,6 +10,21 @@ interface Plan {
     name: string;
     price: number;
     yearlyPrice?: number;
+}
+
+// Helper function to get Stripe instance with proper mode
+function getStripeInstance(testMode: boolean) {
+    const stripeSecretKey = testMode
+        ? process.env.STRIPE_TEST_SECRET_KEY
+        : process.env.STRIPE_SECRET_KEY;
+
+    if (!stripeSecretKey) {
+        throw new Error(`${testMode ? 'Test' : 'Production'} Stripe key not found in environment variables`);
+    }
+
+    return new Stripe(stripeSecretKey, {
+        apiVersion: '2025-02-24.acacia',
+    });
 }
 
 export async function POST(request: Request) {
@@ -43,221 +58,244 @@ export async function POST(request: Request) {
             );
         }
 
-        // Initialize Stripe with the appropriate key based on test mode
-        const stripeSecretKey = testMode
-            ? process.env.STRIPE_TEST_SECRET_KEY
-            : process.env.STRIPE_SECRET_KEY;
+        console.log("==== CHECKOUT SESSION CREATION ====");
+        console.log(`User: ${session.user.id}`);
+        console.log(`Plan: ${planId}, Billing: ${billingCycle}`);
+        console.log(`Test Mode: ${testMode ? 'ENABLED' : 'DISABLED'}`);
 
-        const stripe = new Stripe(stripeSecretKey || '', {
-            apiVersion: '2025-02-24.acacia',
-        });
-
-        console.log(`Creating ${testMode ? 'TEST' : 'PRODUCTION'} checkout session for user ${session.user.id}, plan: ${planId}, cycle: ${billingCycle}`);
-
-        // Define pricing plans
-        const plans: Record<string, Plan> = {
-            free: {
-                id: 'free',
-                name: 'Free Plan',
-                price: 0
-            },
-            pro: {
-                id: 'pro',
-                name: 'Pro Plan',
-                price: 1499, // $14.99 in cents
-                yearlyPrice: 14388 // Discounted yearly price
-            },
-            elite: {
-                id: 'elite',
-                name: 'Elite Plan',
-                price: 3999, // $39.99 in cents
-                yearlyPrice: 38390 // Discounted yearly price
+        // Check environment variables
+        if (testMode) {
+            if (!process.env.STRIPE_TEST_SECRET_KEY) {
+                console.error("STRIPE_TEST_SECRET_KEY is missing in environment");
+                return NextResponse.json({ message: 'Test mode not configured' }, { status: 500 });
             }
-        };
+            console.log("Using TEST Stripe key");
+        } else {
+            if (!process.env.STRIPE_SECRET_KEY) {
+                console.error("STRIPE_SECRET_KEY is missing in environment");
+                return NextResponse.json({ message: 'Stripe is not configured' }, { status: 500 });
+            }
+            console.log("Using PRODUCTION Stripe key");
+        }
 
-        // Handle free plan without Stripe
-        if (planId === 'free') {
-            try {
-                const freeData = {
-                    user_id: session.user.id,
-                    plan_id: 'free',
-                    status: 'active',
-                    billing_cycle: 'monthly',
-                    next_billing_date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-                    stripe_subscription_id: null,
-                    stripe_customer_id: null,
-                    updated_at: new Date().toISOString(),
-                    created_at: new Date().toISOString()
-                };
+        try {
+            // Initialize Stripe with the appropriate key
+            const stripe = getStripeInstance(testMode);
 
-                console.log(`Switching to free plan, data:`, freeData);
+            console.log(`Creating ${testMode ? 'TEST' : 'PRODUCTION'} checkout session for user ${session.user.id}, plan: ${planId}, cycle: ${billingCycle}`);
 
-                const { data, error } = await adminSupabase
-                    .from('user_subscriptions')
-                    .upsert(freeData, { onConflict: 'user_id' })
-                    .select();
+            // Define pricing plans
+            const plans: Record<string, Plan> = {
+                free: {
+                    id: 'free',
+                    name: 'Free Plan',
+                    price: 0
+                },
+                pro: {
+                    id: 'pro',
+                    name: 'Pro Plan',
+                    price: 1499, // $14.99 in cents
+                    yearlyPrice: 14388 // Discounted yearly price
+                },
+                elite: {
+                    id: 'elite',
+                    name: 'Elite Plan',
+                    price: 3999, // $39.99 in cents
+                    yearlyPrice: 38390 // Discounted yearly price
+                }
+            };
 
-                if (error) {
-                    console.error('Error updating to free plan:', error);
+            // Handle free plan without Stripe
+            if (planId === 'free') {
+                try {
+                    const freeData = {
+                        user_id: session.user.id,
+                        plan_id: 'free',
+                        status: 'active',
+                        billing_cycle: 'monthly',
+                        next_billing_date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+                        stripe_subscription_id: null,
+                        stripe_customer_id: null,
+                        updated_at: new Date().toISOString(),
+                        created_at: new Date().toISOString()
+                    };
+
+                    console.log(`Switching to free plan, data:`, freeData);
+
+                    const { data, error } = await adminSupabase
+                        .from('user_subscriptions')
+                        .upsert(freeData, { onConflict: 'user_id' })
+                        .select();
+
+                    if (error) {
+                        console.error('Error updating to free plan:', error);
+                        return NextResponse.json({ message: 'Database update failed' }, { status: 500 });
+                    }
+
+                    console.log('Successfully updated to free plan:', data);
+
+                    return NextResponse.json({
+                        success: true,
+                        message: 'Switched to Free plan',
+                        redirect: `${process.env.NEXT_PUBLIC_BASE_URL}/dashboard?success=true&t=${Date.now()}`
+                    });
+                } catch (dbError) {
+                    console.error('Error updating subscription to free plan:', dbError);
                     return NextResponse.json({ message: 'Database update failed' }, { status: 500 });
                 }
-
-                console.log('Successfully updated to free plan:', data);
-
-                return NextResponse.json({
-                    success: true,
-                    message: 'Switched to Free plan',
-                    // No redirect needed - stays on same page with updated data
-                    redirect: `${process.env.NEXT_PUBLIC_BASE_URL}/dashboard?success=true&t=${Date.now()}`
-                });
-            } catch (dbError) {
-                console.error('Error updating subscription to free plan:', dbError);
-                return NextResponse.json({ message: 'Database update failed' }, { status: 500 });
-            }
-        }
-
-        // Lookup the selected plan
-        const selectedPlan = plans[planId];
-        if (!selectedPlan) {
-            return NextResponse.json(
-                { message: 'Invalid plan selected' },
-                { status: 400 }
-            );
-        }
-
-        // Get or create Stripe customer
-        let customerId = null;
-        try {
-            // Get existing subscription
-            const { data: userSubscription, error: subError } = await adminSupabase
-                .from('user_subscriptions')
-                .select('*')
-                .eq('user_id', session.user.id)
-                .single();
-
-            if (subError && subError.code !== 'PGRST116') {
-                console.error('Error fetching subscription:', subError);
             }
 
-            console.log(`Existing subscription:`, userSubscription);
+            // Lookup the selected plan
+            const selectedPlan = plans[planId];
+            if (!selectedPlan) {
+                return NextResponse.json(
+                    { message: 'Invalid plan selected' },
+                    { status: 400 }
+                );
+            }
 
-            if (userSubscription?.stripe_customer_id) {
-                customerId = String(userSubscription.stripe_customer_id);
-                console.log(`Using existing customer ID: ${customerId}`);
-            } else {
-                // Make sure we have an email for the new customer
-                if (!session.user.email) {
-                    return NextResponse.json(
-                        { message: 'User email is required for creating a customer' },
-                        { status: 400 }
-                    );
+            // Get or create Stripe customer
+            let customerId = null;
+            try {
+                // Get existing subscription
+                const { data: userSubscription, error: subError } = await adminSupabase
+                    .from('user_subscriptions')
+                    .select('*')
+                    .eq('user_id', session.user.id)
+                    .single();
+
+                if (subError && subError.code !== 'PGRST116') {
+                    console.error('Error fetching subscription:', subError);
                 }
 
-                // Create a new customer in Stripe
-                const customer = await stripe.customers.create({
-                    email: session.user.email,
-                    name: session.user.name || undefined,
-                    metadata: {
-                        userId: session.user.id
+                console.log(`Existing subscription:`, userSubscription);
+
+                if (userSubscription?.stripe_customer_id) {
+                    customerId = String(userSubscription.stripe_customer_id);
+                    console.log(`Using existing customer ID: ${customerId}`);
+                } else {
+                    // Make sure we have an email for the new customer
+                    if (!session.user.email) {
+                        return NextResponse.json(
+                            { message: 'User email is required for creating a customer' },
+                            { status: 400 }
+                        );
                     }
-                });
 
-                customerId = String(customer.id);
-                console.log(`Created new customer ID: ${customerId}`);
+                    // Create a new customer in Stripe
+                    const customer = await stripe.customers.create({
+                        email: session.user.email,
+                        name: session.user.name || undefined,
+                        metadata: {
+                            userId: session.user.id
+                        }
+                    });
 
-                // Save the customer ID
-                if (customerId) {
-                    const { error: saveError } = await adminSupabase
-                        .from('user_subscriptions')
-                        .upsert({
-                            user_id: session.user.id,
-                            plan_id: userSubscription?.plan_id || 'free',
-                            status: userSubscription?.status || 'active',
-                            stripe_customer_id: customerId,
-                            updated_at: new Date().toISOString(),
-                            created_at: new Date().toISOString()
-                        }, { onConflict: 'user_id' });
+                    customerId = String(customer.id);
+                    console.log(`Created new customer ID: ${customerId}`);
 
-                    if (saveError) {
-                        console.error('Error saving customer ID:', saveError);
-                    } else {
-                        console.log('Saved customer ID to database');
+                    // Save the customer ID
+                    if (customerId) {
+                        const { error: saveError } = await adminSupabase
+                            .from('user_subscriptions')
+                            .upsert({
+                                user_id: session.user.id,
+                                plan_id: userSubscription?.plan_id || 'free',
+                                status: userSubscription?.status || 'active',
+                                stripe_customer_id: customerId,
+                                updated_at: new Date().toISOString(),
+                                created_at: new Date().toISOString()
+                            }, { onConflict: 'user_id' });
+
+                        if (saveError) {
+                            console.error('Error saving customer ID:', saveError);
+                        } else {
+                            console.log('Saved customer ID to database');
+                        }
                     }
                 }
+            } catch (error) {
+                console.error('Error getting/creating Stripe customer:', error);
+                return NextResponse.json(
+                    { message: 'Error managing customer' },
+                    { status: 500 }
+                );
             }
-        } catch (error) {
-            console.error('Error getting/creating Stripe customer:', error);
-            return NextResponse.json(
-                { message: 'Error managing customer' },
-                { status: 500 }
-            );
-        }
 
-        // If we still don't have a customer ID, return an error
-        if (!customerId) {
-            return NextResponse.json(
-                { message: 'Failed to create or retrieve customer' },
-                { status: 500 }
-            );
-        }
+            // If we still don't have a customer ID, return an error
+            if (!customerId) {
+                return NextResponse.json(
+                    { message: 'Failed to create or retrieve customer' },
+                    { status: 500 }
+                );
+            }
 
-        // Determine the correct price
-        const unitAmount = billingCycle === 'yearly' && selectedPlan.yearlyPrice
-            ? selectedPlan.yearlyPrice
-            : selectedPlan.price;
+            // Determine the correct price
+            const unitAmount = billingCycle === 'yearly' && selectedPlan.yearlyPrice
+                ? selectedPlan.yearlyPrice
+                : selectedPlan.price;
 
-        // Add timestamp to success URL for cache busting
-        const timestamp = Date.now();
-        const success_url = `${process.env.NEXT_PUBLIC_BASE_URL}/dashboard?success=true&t=${timestamp}`;
-        const cancel_url = `${process.env.NEXT_PUBLIC_BASE_URL}/dashboard/manage-plan?canceled=true&t=${timestamp}`;
+            // Add timestamp to success URL for cache busting
+            const timestamp = Date.now();
+            const success_url = `${process.env.NEXT_PUBLIC_BASE_URL}/dashboard?success=true&t=${timestamp}`;
+            const cancel_url = `${process.env.NEXT_PUBLIC_BASE_URL}/dashboard/manage-plan?canceled=true&t=${timestamp}`;
 
-        // Prepare checkout session parameters with explicit typings
-        const params: Stripe.Checkout.SessionCreateParams = {
-            customer: customerId,
-            payment_method_types: ['card'],
-            line_items: [
-                {
-                    price_data: {
-                        currency: 'usd',
-                        product_data: {
-                            name: `${selectedPlan.name}${testMode ? ' (TEST)' : ''}`,
-                            description: `${billingCycle === 'yearly' ? 'Annual' : 'Monthly'} subscription`,
+            // Prepare checkout session parameters with explicit typings
+            const params: Stripe.Checkout.SessionCreateParams = {
+                customer: customerId,
+                payment_method_types: ['card'],
+                line_items: [
+                    {
+                        price_data: {
+                            currency: 'usd',
+                            product_data: {
+                                name: `${selectedPlan.name}${testMode ? ' (TEST)' : ''}`,
+                                description: `${billingCycle === 'yearly' ? 'Annual' : 'Monthly'} subscription`,
+                            },
+                            unit_amount: unitAmount,
+                            recurring: {
+                                interval: billingCycle === 'yearly' ? 'year' : 'month',
+                            },
                         },
-                        unit_amount: unitAmount,
-                        recurring: {
-                            interval: billingCycle === 'yearly' ? 'year' : 'month',
-                        },
+                        quantity: 1,
                     },
-                    quantity: 1,
+                ],
+                mode: 'subscription',
+                success_url: success_url,
+                cancel_url: cancel_url,
+                metadata: {
+                    userId: session.user.id,
+                    planId: planId,
+                    billingCycle: billingCycle,
+                    testMode: testMode ? 'true' : 'false',
+                    source: 'nextauth-checkout'
                 },
-            ],
-            mode: 'subscription',
-            success_url: success_url,
-            cancel_url: cancel_url,
-            metadata: {
-                userId: session.user.id,
-                planId: planId,
-                billingCycle: billingCycle,
-                testMode: testMode ? 'true' : 'false'
-            },
-        };
+            };
 
-        console.log('Creating checkout session with params:', JSON.stringify({
-            customer: customerId,
-            mode: params.mode,
-            success_url: params.success_url,
-            metadata: params.metadata
-        }));
+            console.log('Creating checkout session with params:', JSON.stringify({
+                customer: customerId,
+                mode: params.mode,
+                success_url: params.success_url,
+                metadata: params.metadata
+            }));
 
-        // Create Stripe Checkout Session with typed params
-        const checkoutSession = await stripe.checkout.sessions.create(params);
+            // Create Stripe Checkout Session with typed params
+            const checkoutSession = await stripe.checkout.sessions.create(params);
 
-        console.log(`✅ Created ${testMode ? 'TEST' : 'PRODUCTION'} checkout session ${checkoutSession.id} for user ${session.user.id}, plan ${planId}`);
+            console.log(`✅ Created ${testMode ? 'TEST' : 'PRODUCTION'} checkout session ${checkoutSession.id} for user ${session.user.id}, plan ${planId}`);
 
-        return NextResponse.json({ sessionUrl: checkoutSession.url });
+            return NextResponse.json({ sessionUrl: checkoutSession.url });
+        } catch (stripeError) {
+            console.error("Stripe error:", stripeError);
+            return NextResponse.json(
+                { message: stripeError instanceof Error ? stripeError.message : 'Stripe error' },
+                { status: 500 }
+            );
+        }
     } catch (error: unknown) {
         console.error('❌ Error creating checkout session:', error);
-        return NextResponse.json({message: error instanceof Error ? error.message : 'Error creating checkout session'},
+        return NextResponse.json(
+            { message: error instanceof Error ? error.message : 'Error creating checkout session' },
             { status: 500 }
         );
     }
