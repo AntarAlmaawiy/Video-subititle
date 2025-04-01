@@ -614,14 +614,12 @@ export default function ManagePlanPage() {
     }, [status, router, session?.user?.id, fetchUserData, loadAttempted, checkPendingCheckout])
 
     // Handle checkout with Stripe
-    // Improved handleUpgrade function for manage-plan/page.tsx
     const handleUpgrade = async (planId: string) => {
         if (!session?.user?.id) {
             router.push("/signin");
             return;
         }
 
-        // Debug logging
         console.log("Starting upgrade process:");
         console.log(`Plan ID: ${planId}`);
         console.log(`Test Mode: ${isTestMode}`);
@@ -631,11 +629,18 @@ export default function ManagePlanPage() {
         setProcessingPayment(true);
         setError(null);
 
+        // Create a timeout to reset loading state if it takes too long
+        const loadingTimeout = setTimeout(() => {
+            console.log("Checkout process timed out");
+            setProcessingPayment(false);
+            toast.error("Checkout process timed out. Please try again.");
+        }, 15000); // 15 seconds timeout
+
         try {
-            // Always ensure the test mode is saved to localStorage
+            // Ensure test mode is saved to localStorage
             localStorage.setItem("checkoutTestMode", isTestMode ? "true" : "false");
 
-            // Create a checkout session with Stripe
+            // Create checkout session with Stripe
             const response = await fetch("/api/create-checkout-session", {
                 method: "POST",
                 headers: {
@@ -645,34 +650,52 @@ export default function ManagePlanPage() {
                     planId: planId,
                     billingCycle: activeTab,
                     testMode: isTestMode,
-                    timestamp: Date.now(), // Add timestamp to prevent caching issues
+                    timestamp: Date.now(), // Prevent caching
                 }),
             });
 
+            // Clear the timeout since we got a response
+            clearTimeout(loadingTimeout);
+
             console.log("API response status:", response.status);
 
-            if (!response.ok) {
-                const errorData = await response.json();
-                console.error("Checkout error response:", errorData);
-                throw new Error(errorData.message || "Failed to create checkout session");
+            // Even if the response is not OK, try to get the response body
+            const responseText = await response.text();
+            console.log("Raw response:", responseText);
+
+            let data;
+            try {
+                data = JSON.parse(responseText);
+            } catch (e) {
+                console.error("Failed to parse response as JSON:", e);
+                throw new Error(`Server returned invalid JSON: ${responseText.substring(0, 100)}...`);
             }
 
-            const data = await response.json();
-            console.log("Checkout session created successfully:", data.sessionUrl ? "URL received" : "No URL");
+            if (!response.ok) {
+                console.error("Checkout error response:", data);
+                throw new Error(data.message || `Server returned ${response.status}: ${responseText.substring(0, 100)}...`);
+            }
 
             if (!data.sessionUrl) {
                 throw new Error("No checkout URL returned from server");
             }
 
-            // Store checkout info in localStorage for verification on return
+            console.log("Checkout session created successfully");
+
+            // Store checkout info in localStorage
             localStorage.setItem("pendingCheckout", "true");
             localStorage.setItem("checkoutTime", Date.now().toString());
             localStorage.setItem("checkoutPlanId", planId);
             localStorage.setItem("checkoutBillingCycle", activeTab);
 
-            console.log("Redirecting to Stripe checkout...");
+            console.log("Redirecting to Stripe checkout:", data.sessionUrl);
+
+            // Use window.location for redirection
             window.location.href = data.sessionUrl;
         } catch (err) {
+            // Clear the timeout if there's an error
+            clearTimeout(loadingTimeout);
+
             console.error("Checkout error:", err);
             toast.error(err instanceof Error ? err.message : "Failed to process checkout");
             setProcessingPayment(false);
