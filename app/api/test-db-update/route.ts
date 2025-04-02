@@ -2,7 +2,7 @@
 import { NextResponse } from 'next/server';
 import { auth } from '@/app/api/auth/[...nextauth]/route';
 import { getAdminSupabase } from '@/lib/admin-supabase';
-
+// In app/api/test-db-update/route.ts
 export async function POST(request: Request) {
     try {
         const session = await auth();
@@ -15,26 +15,37 @@ export async function POST(request: Request) {
 
         const adminSupabase = getAdminSupabase();
 
-        // First try using INSERT with ON CONFLICT
-        const { data: upsertData, error: upsertError } = await adminSupabase
+        console.log(`Testing DB update for user ${session.user.id}`);
+
+        // First check if the user already has a record
+        const { data: existingData, error: checkError } = await adminSupabase
             .from('user_subscriptions')
-            .upsert({
-                user_id: session.user.id,
-                plan_id: planId,
-                status: status,
-                next_billing_date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-                updated_at: new Date().toISOString()
-            }, {
-                onConflict: 'user_id',
-                ignoreDuplicates: false
-            })
-            .select();
+            .select('id')
+            .eq('user_id', session.user.id);
 
-        if (upsertError) {
-            console.error('Upsert error:', upsertError);
+        console.log('Existing subscription check:', existingData, checkError);
 
-            // Try direct update as fallback
-            const { data: updateData, error: updateError } = await adminSupabase
+        let result;
+
+        if (!existingData || existingData.length === 0) {
+            // Insert new record
+            const { data, error } = await adminSupabase
+                .from('user_subscriptions')
+                .insert({
+                    user_id: session.user.id,
+                    plan_id: planId,
+                    status: status,
+                    next_billing_date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+                    created_at: new Date().toISOString(),
+                    updated_at: new Date().toISOString()
+                })
+                .select();
+
+            console.log('Insert result:', data, error);
+            result = { method: 'insert', data, error };
+        } else {
+            // Update existing record
+            const { data, error } = await adminSupabase
                 .from('user_subscriptions')
                 .update({
                     plan_id: planId,
@@ -45,27 +56,16 @@ export async function POST(request: Request) {
                 .eq('user_id', session.user.id)
                 .select();
 
-            if (updateError) {
-                return NextResponse.json({
-                    success: false,
-                    upsertError: upsertError.message,
-                    updateError: updateError.message
-                }, { status: 500 });
-            }
-
-            return NextResponse.json({
-                success: true,
-                method: 'update',
-                data: updateData
-            });
+            console.log('Update result:', data, error);
+            result = { method: 'update', data, error };
         }
 
         return NextResponse.json({
-            success: true,
-            method: 'upsert',
-            data: upsertData
+            success: !result.error,
+            ...result
         });
     } catch (error) {
+        console.error('Error in test-db-update:', error);
         return NextResponse.json({ error: String(error) }, { status: 500 });
     }
 }

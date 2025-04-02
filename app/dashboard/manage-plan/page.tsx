@@ -614,6 +614,7 @@ export default function ManagePlanPage() {
     }, [status, router, session?.user?.id, fetchUserData, loadAttempted, checkPendingCheckout])
 
     // Handle checkout with Stripe
+    // Handle checkout with Stripe
     const handleUpgrade = async (planId: string) => {
         if (!session?.user?.id) {
             router.push("/signin");
@@ -640,6 +641,11 @@ export default function ManagePlanPage() {
             // Ensure test mode is saved to localStorage
             localStorage.setItem("checkoutTestMode", isTestMode ? "true" : "false");
 
+            // Clear any previous customer IDs from local storage in test mode
+            if (isTestMode) {
+                localStorage.removeItem("stripeCustomerId");
+            }
+
             // Create checkout session with Stripe
             const response = await fetch("/api/create-checkout-session", {
                 method: "POST",
@@ -650,6 +656,7 @@ export default function ManagePlanPage() {
                     planId: planId,
                     billingCycle: activeTab,
                     testMode: isTestMode,
+                    forceNewCustomer: isTestMode, // Force new customer in test mode
                     timestamp: Date.now(), // Prevent caching
                 }),
             });
@@ -701,7 +708,6 @@ export default function ManagePlanPage() {
             setProcessingPayment(false);
         }
     };
-
     // Show cancel confirmation modal
     const handleCancel = async () => {
         if (!session?.user?.id) return
@@ -959,40 +965,8 @@ export default function ManagePlanPage() {
                 Save 20%
               </span>
                         </button>
-                        <button
-                            onClick={async () => {
-                                try {
-                                    toast.loading("Manually refreshing subscription...");
-
-                                    // First try the direct test update
-                                    const updateResponse = await fetch('/api/test-db-update', {
-                                        method: 'POST',
-                                        headers: { 'Content-Type': 'application/json' },
-                                        body: JSON.stringify({ planId: 'pro', status: 'active' })
-                                    });
-
-                                    const updateData = await updateResponse.json();
-                                    console.log("Manual update result:", updateData);
-
-                                    if (updateData.success) {
-                                        toast.success("Database updated directly!");
-                                        // Refresh the UI
-                                        await fetchUserData(true);
-                                    } else {
-                                        toast.error("Failed to update database directly");
-                                    }
-                                } catch (error) {
-                                    console.error("Error:", error);
-                                    toast.error("Manual refresh failed");
-                                }
-                            }}
-                            className="px-4 py-2 bg-red-500 text-white rounded mt-4"
-                        >
-                            Debug: Direct DB Update
-                        </button>
                     </div>
                 </div>
-
 
                 {/* Plans Comparison */}
                 <div className="max-w-6xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-6">
