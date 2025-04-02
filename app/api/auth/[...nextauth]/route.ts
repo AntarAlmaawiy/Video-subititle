@@ -17,8 +17,46 @@ async function ensureUserProfile(user: User | AdapterUser | undefined) {
         console.log(`Ensuring profile exists for user: ${user.id}`);
         const adminSupabase = getAdminSupabase();
 
+        // First check if a profile with this email already exists
+        if (user.email) {
+            const { data: emailExists } = await adminSupabase
+                .from('profiles')
+                .select('id')
+                .eq('email', user.email)
+                .maybeSingle();
+
+            if (emailExists && emailExists.id !== user.id) {
+                console.log(`Profile with email ${user.email} already exists with different ID: ${emailExists.id}`);
+                // In this case, we'll just let the user continue with their current ID
+                // but we won't try to create a profile
+
+                // Still ensure they have a subscription
+                const { error: subError } = await adminSupabase
+                    .from('user_subscriptions')
+                    .select('id')
+                    .eq('user_id', user.id)
+                    .single();
+
+                if (subError && subError.code === 'PGRST116') {
+                    // Create subscription for this user
+                    await adminSupabase
+                        .from('user_subscriptions')
+                        .insert({
+                            user_id: user.id,
+                            plan_id: 'free',
+                            status: 'active',
+                            next_billing_date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+                            created_at: new Date().toISOString(),
+                            updated_at: new Date().toISOString()
+                        });
+                }
+
+                return;
+            }
+        }
+
         // Check if profile exists
-        const { error: profileError } = await adminSupabase
+        const {  error: profileError } = await adminSupabase
             .from('profiles')
             .select('id')
             .eq('id', user.id)
@@ -28,20 +66,45 @@ async function ensureUserProfile(user: User | AdapterUser | undefined) {
         if (profileError && profileError.code === 'PGRST116') {
             console.log(`Profile not found for ${user.id}, creating new profile`);
 
-            const { error: createError } = await adminSupabase
-                .from('profiles')
-                .insert({
-                    id: user.id,
-                    username: user.name || user.email?.split('@')[0] || `user_${user.id.slice(0, 8)}`,
-                    email: user.email || 'user@example.com',
-                    created_at: new Date().toISOString(),
-                    updated_at: new Date().toISOString()
-                });
+            try {
+                const { error: createError } = await adminSupabase
+                    .from('profiles')
+                    .upsert({
+                        id: user.id,
+                        username: user.name || user.email?.split('@')[0] || `user_${user.id.slice(0, 8)}`,
+                        email: user.email || `user_${user.id.slice(0, 8)}@example.com`,
+                        created_at: new Date().toISOString(),
+                        updated_at: new Date().toISOString()
+                    }, {
+                        onConflict: 'id'
+                    });
 
-            if (createError) {
-                console.error('Error creating profile:', createError);
-            } else {
-                console.log(`Successfully created profile for ${user.id}`);
+                if (createError) {
+                    if (createError.code === '23505' && createError.message.includes('profiles_email_key')) {
+                        // Email constraint violation - try with a modified email
+                        const uniqueEmail = user.email ?
+                            `${user.email.split('@')[0]}_${user.id.slice(0, 6)}@${user.email.split('@')[1]}` :
+                            `user_${user.id}@example.com`;
+
+                        await adminSupabase
+                            .from('profiles')
+                            .upsert({
+                                id: user.id,
+                                username: user.name || uniqueEmail.split('@')[0],
+                                email: uniqueEmail,
+                                created_at: new Date().toISOString(),
+                                updated_at: new Date().toISOString()
+                            }, {
+                                onConflict: 'id'
+                            });
+                    } else {
+                        console.error('Error creating profile:', createError);
+                    }
+                } else {
+                    console.log(`Successfully created profile for ${user.id}`);
+                }
+            } catch (err) {
+                console.error('Exception creating profile:', err);
             }
         } else if (profileError) {
             console.error('Error checking profile:', profileError);
