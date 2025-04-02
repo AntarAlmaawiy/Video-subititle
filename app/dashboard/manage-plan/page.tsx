@@ -959,8 +959,40 @@ export default function ManagePlanPage() {
                 Save 20%
               </span>
                         </button>
+                        <button
+                            onClick={async () => {
+                                try {
+                                    toast.loading("Manually refreshing subscription...");
+
+                                    // First try the direct test update
+                                    const updateResponse = await fetch('/api/test-db-update', {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({ planId: 'pro', status: 'active' })
+                                    });
+
+                                    const updateData = await updateResponse.json();
+                                    console.log("Manual update result:", updateData);
+
+                                    if (updateData.success) {
+                                        toast.success("Database updated directly!");
+                                        // Refresh the UI
+                                        await fetchUserData(true);
+                                    } else {
+                                        toast.error("Failed to update database directly");
+                                    }
+                                } catch (error) {
+                                    console.error("Error:", error);
+                                    toast.error("Manual refresh failed");
+                                }
+                            }}
+                            className="px-4 py-2 bg-red-500 text-white rounded mt-4"
+                        >
+                            Debug: Direct DB Update
+                        </button>
                     </div>
                 </div>
+
 
                 {/* Plans Comparison */}
                 <div className="max-w-6xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-6">
