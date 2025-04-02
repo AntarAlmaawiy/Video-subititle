@@ -630,21 +630,34 @@ export default function ManagePlanPage() {
         setProcessingPayment(true);
         setError(null);
 
-        // Create a timeout to reset loading state if it takes too long
-        const loadingTimeout = setTimeout(() => {
-            console.log("Checkout process timed out");
-            setProcessingPayment(false);
-            toast.error("Checkout process timed out. Please try again.");
-        }, 15000); // 15 seconds timeout
-
         try {
+            // First ensure user profile exists in database
+            const profileResponse = await fetch("/api/auth/ensure-profile");
+            const profileData = await profileResponse.json();
+            console.log("Profile check result:", profileData);
+
+            // If in test mode, first call the reset endpoint to clear existing customer ID
+            if (isTestMode) {
+                try {
+                    console.log("Test mode active - resetting stripe customer ID first");
+                    const resetResponse = await fetch("/api/reset-stripe-customer");
+                    const resetData = await resetResponse.json();
+                    console.log("Reset response:", resetData);
+                } catch (resetErr) {
+                    console.error("Failed to reset customer ID:", resetErr);
+                    // Continue anyway
+                }
+            }
+
+            // Create a timeout to reset loading state if it takes too long
+            const loadingTimeout = setTimeout(() => {
+                console.log("Checkout process timed out");
+                setProcessingPayment(false);
+                toast.error("Checkout process timed out. Please try again.");
+            }, 15000); // 15 seconds timeout
+
             // Ensure test mode is saved to localStorage
             localStorage.setItem("checkoutTestMode", isTestMode ? "true" : "false");
-
-            // Clear any previous customer IDs from local storage in test mode
-            if (isTestMode) {
-                localStorage.removeItem("stripeCustomerId");
-            }
 
             // Create checkout session with Stripe
             const response = await fetch("/api/create-checkout-session", {
@@ -657,6 +670,7 @@ export default function ManagePlanPage() {
                     billingCycle: activeTab,
                     testMode: isTestMode,
                     forceNewCustomer: isTestMode, // Force new customer in test mode
+                    clearExistingCustomer: isTestMode, // Clear any existing customer ID in test mode
                     timestamp: Date.now(), // Prevent caching
                 }),
             });
@@ -700,9 +714,6 @@ export default function ManagePlanPage() {
             // Use window.location for redirection
             window.location.href = data.sessionUrl;
         } catch (err) {
-            // Clear the timeout if there's an error
-            clearTimeout(loadingTimeout);
-
             console.error("Checkout error:", err);
             toast.error(err instanceof Error ? err.message : "Failed to process checkout");
             setProcessingPayment(false);
