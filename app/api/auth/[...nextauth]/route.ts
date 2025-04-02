@@ -6,146 +6,23 @@ import CredentialsProvider from "next-auth/providers/credentials";
 import { supabase } from "@/lib/supabase";
 import { getAdminSupabase } from "@/lib/admin-supabase";
 import type { User } from "next-auth";
-import type { AdapterUser } from "next-auth/adapters";
+import type { JWT } from "next-auth/jwt";
 
-// Helper function to ensure user profile exists in Supabase
-async function ensureUserProfile(user: User | AdapterUser | undefined) {
-    // Type guard to ensure user has an id
-    if (!user || !user.id) return;
+// Create extended types
+interface ExtendedUser extends User {
+    supabaseId?: string;
+}
 
-    try {
-        console.log(`Ensuring profile exists for user: ${user.id}`);
-        const adminSupabase = getAdminSupabase();
+interface ExtendedJWT extends JWT {
+    supabaseId?: string;
+}
 
-        // First check if a profile with this email already exists
-        if (user.email) {
-            const { data: emailExists } = await adminSupabase
-                .from('profiles')
-                .select('id')
-                .eq('email', user.email)
-                .maybeSingle();
-
-            if (emailExists && emailExists.id !== user.id) {
-                console.log(`Profile with email ${user.email} already exists with different ID: ${emailExists.id}`);
-                // In this case, we'll just let the user continue with their current ID
-                // but we won't try to create a profile
-
-                // Still ensure they have a subscription
-                const { error: subError } = await adminSupabase
-                    .from('user_subscriptions')
-                    .select('id')
-                    .eq('user_id', user.id)
-                    .single();
-
-                if (subError && subError.code === 'PGRST116') {
-                    // Create subscription for this user
-                    await adminSupabase
-                        .from('user_subscriptions')
-                        .insert({
-                            user_id: user.id,
-                            plan_id: 'free',
-                            status: 'active',
-                            next_billing_date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-                            created_at: new Date().toISOString(),
-                            updated_at: new Date().toISOString()
-                        });
-                }
-
-                return;
-            }
-        }
-
-        // Check if profile exists
-        const {  error: profileError } = await adminSupabase
-            .from('profiles')
-            .select('id')
-            .eq('id', user.id)
-            .single();
-
-        // If profile not found, create it
-        if (profileError && profileError.code === 'PGRST116') {
-            console.log(`Profile not found for ${user.id}, creating new profile`);
-
-            try {
-                const { error: createError } = await adminSupabase
-                    .from('profiles')
-                    .upsert({
-                        id: user.id,
-                        username: user.name || user.email?.split('@')[0] || `user_${user.id.slice(0, 8)}`,
-                        email: user.email || `user_${user.id.slice(0, 8)}@example.com`,
-                        created_at: new Date().toISOString(),
-                        updated_at: new Date().toISOString()
-                    }, {
-                        onConflict: 'id'
-                    });
-
-                if (createError) {
-                    if (createError.code === '23505' && createError.message.includes('profiles_email_key')) {
-                        // Email constraint violation - try with a modified email
-                        const uniqueEmail = user.email ?
-                            `${user.email.split('@')[0]}_${user.id.slice(0, 6)}@${user.email.split('@')[1]}` :
-                            `user_${user.id}@example.com`;
-
-                        await adminSupabase
-                            .from('profiles')
-                            .upsert({
-                                id: user.id,
-                                username: user.name || uniqueEmail.split('@')[0],
-                                email: uniqueEmail,
-                                created_at: new Date().toISOString(),
-                                updated_at: new Date().toISOString()
-                            }, {
-                                onConflict: 'id'
-                            });
-                    } else {
-                        console.error('Error creating profile:', createError);
-                    }
-                } else {
-                    console.log(`Successfully created profile for ${user.id}`);
-                }
-            } catch (err) {
-                console.error('Exception creating profile:', err);
-            }
-        } else if (profileError) {
-            console.error('Error checking profile:', profileError);
-        } else {
-            console.log(`Profile already exists for ${user.id}`);
-        }
-
-        // Check if subscription exists
-        const { error: subError } = await adminSupabase
-            .from('user_subscriptions')
-            .select('id')
-            .eq('user_id', user.id)
-            .single();
-
-        // If subscription not found, create free plan subscription
-        if (subError && subError.code === 'PGRST116') {
-            console.log(`Subscription not found for ${user.id}, creating free plan`);
-
-            const { error: createSubError } = await adminSupabase
-                .from('user_subscriptions')
-                .insert({
-                    user_id: user.id,
-                    plan_id: 'free',
-                    status: 'active',
-                    next_billing_date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-                    created_at: new Date().toISOString(),
-                    updated_at: new Date().toISOString()
-                });
-
-            if (createSubError) {
-                console.error('Error creating subscription:', createSubError);
-            } else {
-                console.log(`Successfully created subscription for ${user.id}`);
-            }
-        } else if (subError) {
-            console.error('Error checking subscription:', subError);
-        } else {
-            console.log(`Subscription already exists for ${user.id}`);
-        }
-    } catch (error) {
-        console.error('Error ensuring user profile:', error);
+// Declare module to extend session.user
+declare module "next-auth" {
+    interface Session {
+        user: User & {
+            supabaseId?: string;
+        };
     }
 }
 
@@ -215,9 +92,135 @@ export const { handlers: { GET, POST }, auth, signIn, signOut } = NextAuth({
         async signIn({ user, account }) {
             console.log(`User signed in: ${user.id}, provider: ${account?.provider}`);
 
-            // For OAuth providers, ensure we create the profile
-            if (account?.provider === 'google' || account?.provider === 'github') {
-                await ensureUserProfile(user);
+            // Only for OAuth providers
+            if ((account?.provider === 'google' || account?.provider === 'github') && user.email) {
+                try {
+                    const adminSupabase = getAdminSupabase();
+
+                    // Find or create Supabase user
+                    let supabaseUserId: string | undefined;
+
+                    try {
+                        // Try to get existing user by email
+                        // Use listUsers with email filter
+                        const { data, error } = await adminSupabase.auth.admin.listUsers();
+
+                        if (!error && data && data.users) {
+                            // Find user with matching email
+                            const existingUser = data.users.find(u => u.email === user.email);
+                            if (existingUser) {
+                                supabaseUserId = existingUser.id;
+                                console.log(`Found existing Supabase user with ID ${supabaseUserId}`);
+                            }
+                        }
+                    } catch (getUserErr) {
+                        console.error('Error checking for existing user:', getUserErr);
+                    }
+
+                    // Create user if not found
+                    if (!supabaseUserId) {
+                        console.log(`Creating new Supabase user for ${user.email}`);
+
+                        // Generate a random password for the Supabase user
+                        const randomPassword = Math.random().toString(36).slice(-12);
+
+                        try {
+                            const { data, error: createError } = await adminSupabase.auth.admin.createUser({
+                                email: user.email,
+                                password: randomPassword,
+                                email_confirm: true,
+                                user_metadata: {
+                                    name: user.name || '',
+                                    oauth_provider: account.provider,
+                                    oauth_id: user.id
+                                }
+                            });
+
+                            if (createError) {
+                                console.error('Error creating Supabase user:', createError);
+                            } else if (data && data.user) {
+                                supabaseUserId = data.user.id;
+                                console.log(`Created new Supabase user with ID ${supabaseUserId}`);
+                            }
+                        } catch (createUserErr) {
+                            console.error('Exception creating Supabase user:', createUserErr);
+                        }
+                    }
+
+                    // If we have a Supabase ID, set up profile and subscription
+                    if (supabaseUserId) {
+                        // Check if profile exists
+                        try {
+                            const { data: existingProfile } = await adminSupabase
+                                .from('profiles')
+                                .select('id')
+                                .eq('id', supabaseUserId)
+                                .maybeSingle();
+
+                            if (!existingProfile) {
+                                console.log(`Creating profile for Supabase user ${supabaseUserId}`);
+
+                                const { error: profileError } = await adminSupabase
+                                    .from('profiles')
+                                    .insert({
+                                        id: supabaseUserId,
+                                        username: user.name || user.email.split('@')[0],
+                                        email: user.email,
+                                        oauth_id: user.id,
+                                        created_at: new Date().toISOString(),
+                                        updated_at: new Date().toISOString()
+                                    });
+
+                                if (profileError) {
+                                    console.error('Error creating profile:', profileError);
+                                } else {
+                                    console.log(`Successfully created profile for ${supabaseUserId}`);
+                                }
+                            }
+                        } catch (profileErr) {
+                            console.error('Error with profile creation:', profileErr);
+                        }
+
+                        // Check if subscription exists
+                        try {
+                            const { data: existingSub } = await adminSupabase
+                                .from('user_subscriptions')
+                                .select('id')
+                                .eq('user_id', supabaseUserId)
+                                .maybeSingle();
+
+                            if (!existingSub) {
+                                console.log(`Creating subscription for Supabase user ${supabaseUserId}`);
+
+                                const { error: subError } = await adminSupabase
+                                    .from('user_subscriptions')
+                                    .insert({
+                                        user_id: supabaseUserId,
+                                        plan_id: 'free',
+                                        status: 'active',
+                                        next_billing_date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+                                        created_at: new Date().toISOString(),
+                                        updated_at: new Date().toISOString()
+                                    });
+
+                                if (subError) {
+                                    console.error('Error creating subscription:', subError);
+                                } else {
+                                    console.log(`Successfully created subscription for ${supabaseUserId}`);
+                                }
+                            }
+                        } catch (subErr) {
+                            console.error('Error with subscription creation:', subErr);
+                        }
+
+                        // Store Supabase ID with user
+                        (user as ExtendedUser).supabaseId = supabaseUserId;
+                    }
+
+                } catch (error) {
+                    console.error("Error setting up OAuth user:", error);
+                    // Continue sign-in even if setup fails
+                }
             }
 
             return true;
@@ -226,6 +229,12 @@ export const { handlers: { GET, POST }, auth, signIn, signOut } = NextAuth({
             if (user) {
                 token.id = user.id;
                 token.email = user.email;
+
+                // Transfer supabaseId from user to token if available
+                const extendedUser = user as ExtendedUser;
+                if (extendedUser.supabaseId) {
+                    (token as ExtendedJWT).supabaseId = extendedUser.supabaseId;
+                }
             }
             return token;
         },
@@ -233,20 +242,20 @@ export const { handlers: { GET, POST }, auth, signIn, signOut } = NextAuth({
             if (session.user) {
                 session.user.id = token.id as string;
 
-                // Ensure profile exists on every session creation
-                await ensureUserProfile(session.user);
+                // Transfer supabaseId from token to session
+                const extendedToken = token as ExtendedJWT;
+                if (extendedToken.supabaseId) {
+                    session.user.supabaseId = extendedToken.supabaseId;
+                }
             }
             return session;
         },
-        // Add this redirect callback to handle URLs properly
         async redirect({ url, baseUrl }) {
-            // Allows relative callback URLs
             if (url.startsWith("/")) return `${baseUrl}${url}`;
-            // Allows callback URLs on the same origin
             else if (new URL(url).origin === baseUrl) return url;
             return baseUrl;
         }
     },
-    debug: process.env.NODE_ENV === 'development', // Enable debug mode in development
+    debug: process.env.NODE_ENV === 'development',
     secret: process.env.NEXTAUTH_SECRET,
 });
