@@ -3,6 +3,7 @@ import { auth } from "@/app/api/auth/[...nextauth]/route";
 import { redirect } from "next/navigation";
 import Sidebar from "@/components/Sidebar";
 import { supabase } from '@/lib/supabase';
+import FixOAuthDirect from "@/components/FixOauthDirect";
 
 export default async function DashboardLayout({
                                                   children,
@@ -82,6 +83,7 @@ export default async function DashboardLayout({
 
     return (
         <div className="flex h-screen bg-gray-50">
+            <FixOAuthDirect />
             <Sidebar user={session.user} />
             <main className="flex-1 overflow-y-auto p-6">{children}</main>
         </div>
