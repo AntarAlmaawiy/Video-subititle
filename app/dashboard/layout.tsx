@@ -15,12 +15,12 @@ async function ensureUserSetup(userId: string, email: string, name?: string) {
         .from('profiles')
         .select('id')
         .eq('id', userId)
-        .single();
+        .maybeSingle();
 
     // Create profile if needed
-    if (!existingProfile && (!profileError || profileError.code === 'PGRST116')) {
+    if (!existingProfile && (profileError?.code === 'PGRST116' || !profileError)) {
         console.log(`Creating profile for user ${userId}`);
-        await adminSupabase
+        const { error: insertError } = await adminSupabase
             .from('profiles')
             .insert({
                 id: userId,
@@ -29,6 +29,12 @@ async function ensureUserSetup(userId: string, email: string, name?: string) {
                 created_at: new Date().toISOString(),
                 updated_at: new Date().toISOString()
             });
+
+        if (insertError) {
+            console.error('Error creating profile:', insertError);
+        } else {
+            console.log('Successfully created profile');
+        }
     }
 
     // Check if subscription exists
@@ -36,12 +42,12 @@ async function ensureUserSetup(userId: string, email: string, name?: string) {
         .from('user_subscriptions')
         .select('id')
         .eq('user_id', userId)
-        .single();
+        .maybeSingle();
 
     // Create subscription if needed
-    if (!existingSub && (!subError || subError.code === 'PGRST116')) {
+    if (!existingSub && (subError?.code === 'PGRST116' || !subError)) {
         console.log(`Creating free subscription for user ${userId}`);
-        await adminSupabase
+        const { error: insertSubError } = await adminSupabase
             .from('user_subscriptions')
             .insert({
                 user_id: userId,
@@ -51,6 +57,12 @@ async function ensureUserSetup(userId: string, email: string, name?: string) {
                 created_at: new Date().toISOString(),
                 updated_at: new Date().toISOString()
             });
+
+        if (insertSubError) {
+            console.error('Error creating subscription:', insertSubError);
+        } else {
+            console.log('Successfully created subscription');
+        }
     }
 }
 
