@@ -5,6 +5,7 @@ import GitHubProvider from "next-auth/providers/github";
 import CredentialsProvider from "next-auth/providers/credentials";
 import { supabase } from "@/lib/supabase";
 import { getAdminSupabase } from "@/lib/admin-supabase";
+import { ensureUserProfile } from "@/lib/auth-helpers";
 import type { User } from "next-auth";
 import type { JWT } from "next-auth/jwt";
 
@@ -95,14 +96,12 @@ export const { handlers: { GET, POST }, auth, signIn, signOut } = NextAuth({
             // Only for OAuth providers
             if ((account?.provider === 'google' || account?.provider === 'github') && user.email) {
                 try {
+                    // First create/verify Supabase user
                     const adminSupabase = getAdminSupabase();
-
-                    // Find or create Supabase user
                     let supabaseUserId: string | undefined;
 
                     try {
                         // Try to get existing user by email
-                        // Use listUsers with email filter
                         const { data, error } = await adminSupabase.auth.admin.listUsers();
 
                         if (!error && data && data.users) {
@@ -120,8 +119,6 @@ export const { handlers: { GET, POST }, auth, signIn, signOut } = NextAuth({
                     // Create user if not found
                     if (!supabaseUserId) {
                         console.log(`Creating new Supabase user for ${user.email}`);
-
-                        // Generate a random password for the Supabase user
                         const randomPassword = Math.random().toString(36).slice(-12);
 
                         try {
@@ -147,76 +144,18 @@ export const { handlers: { GET, POST }, auth, signIn, signOut } = NextAuth({
                         }
                     }
 
-                    // If we have a Supabase ID, set up profile and subscription
+                    // If we have a Supabase ID, ensure profile and subscription
                     if (supabaseUserId) {
-                        // Check if profile exists
-                        try {
-                            const { data: existingProfile } = await adminSupabase
-                                .from('profiles')
-                                .select('id')
-                                .eq('id', supabaseUserId)
-                                .maybeSingle();
-
-                            if (!existingProfile) {
-                                console.log(`Creating profile for Supabase user ${supabaseUserId}`);
-
-                                const { error: profileError } = await adminSupabase
-                                    .from('profiles')
-                                    .insert({
-                                        id: supabaseUserId,
-                                        username: user.name || user.email.split('@')[0],
-                                        email: user.email,
-                                        oauth_id: user.id,
-                                        created_at: new Date().toISOString(),
-                                        updated_at: new Date().toISOString()
-                                    });
-
-                                if (profileError) {
-                                    console.error('Error creating profile:', profileError);
-                                } else {
-                                    console.log(`Successfully created profile for ${supabaseUserId}`);
-                                }
-                            }
-                        } catch (profileErr) {
-                            console.error('Error with profile creation:', profileErr);
-                        }
-
-                        // Check if subscription exists
-                        try {
-                            const { data: existingSub } = await adminSupabase
-                                .from('user_subscriptions')
-                                .select('id')
-                                .eq('user_id', supabaseUserId)
-                                .maybeSingle();
-
-                            if (!existingSub) {
-                                console.log(`Creating subscription for Supabase user ${supabaseUserId}`);
-
-                                const { error: subError } = await adminSupabase
-                                    .from('user_subscriptions')
-                                    .insert({
-                                        user_id: supabaseUserId,
-                                        plan_id: 'free',
-                                        status: 'active',
-                                        next_billing_date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-                                        created_at: new Date().toISOString(),
-                                        updated_at: new Date().toISOString()
-                                    });
-
-                                if (subError) {
-                                    console.error('Error creating subscription:', subError);
-                                } else {
-                                    console.log(`Successfully created subscription for ${supabaseUserId}`);
-                                }
-                            }
-                        } catch (subErr) {
-                            console.error('Error with subscription creation:', subErr);
-                        }
+                        // Use the ensureUserProfile helper function
+                        await ensureUserProfile(
+                            supabaseUserId,
+                            user.email,
+                            user.name || undefined
+                        );
 
                         // Store Supabase ID with user
                         (user as ExtendedUser).supabaseId = supabaseUserId;
                     }
-
                 } catch (error) {
                     console.error("Error setting up OAuth user:", error);
                     // Continue sign-in even if setup fails
@@ -225,6 +164,7 @@ export const { handlers: { GET, POST }, auth, signIn, signOut } = NextAuth({
 
             return true;
         },
+
         async jwt({ token, user }) {
             if (user) {
                 token.id = user.id;
@@ -238,6 +178,7 @@ export const { handlers: { GET, POST }, auth, signIn, signOut } = NextAuth({
             }
             return token;
         },
+
         async session({ session, token }) {
             if (session.user) {
                 session.user.id = token.id as string;
@@ -250,6 +191,7 @@ export const { handlers: { GET, POST }, auth, signIn, signOut } = NextAuth({
             }
             return session;
         },
+
         async redirect({ url, baseUrl }) {
             if (url.startsWith("/")) return `${baseUrl}${url}`;
             else if (new URL(url).origin === baseUrl) return url;
