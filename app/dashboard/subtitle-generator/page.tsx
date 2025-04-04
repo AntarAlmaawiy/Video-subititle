@@ -7,7 +7,7 @@ import VideoDropzone from "@/components/VideoDropzone"
 import LanguageSelector from "@/components/LanguageSelector"
 import VideoPlayer from "@/components/VideoPlayer"
 import { Loader2, Clock, AlertCircle } from "lucide-react"
-import { canUploadMoreVideos, getUserSubscription, uploadProcessedVideo, recordVideoProcessed } from "@/lib/supabase"
+import { canUploadMoreVideos, getUserSubscription, recordVideoProcessed } from "@/lib/supabase"
 import Link from "next/link"
 import { formatDistanceToNow } from 'date-fns'
 
@@ -246,6 +246,7 @@ export default function SubtitleGenerator() {
         }
     };
     // Function to save the processed video to Supabase
+    // Function to save the processed video to Supabase
     const saveVideoToLibrary = async () => {
         if (!processedVideoUrl || !session?.user?.id) return
 
@@ -254,31 +255,9 @@ export default function SubtitleGenerator() {
             setErrorMessage(null)
             setSaving(true)
 
-            console.log("Downloading video from:", processedVideoUrl)
+            console.log("Saving video to library from:", processedVideoUrl)
 
-            // First, fetch the video file from the URL with proper CORS handling
-            const response = await fetch(processedVideoUrl, {
-                method: "GET",
-                mode: "cors",
-                cache: "no-cache",
-                credentials: "same-origin",
-                headers: {
-                    "Content-Type": "video/mp4",
-                },
-            })
-
-            if (!response.ok) {
-                throw new Error(`Failed to download the processed video: ${response.status} ${response.statusText}`)
-            }
-
-            const videoBlob = await response.blob()
-            console.log("Video blob size:", videoBlob.size)
-
-            if (videoBlob.size === 0) {
-                throw new Error("Downloaded video is empty")
-            }
-
-            // Extract filename from URL or generate one
+            // Extract filename from URL
             const urlParts = processedVideoUrl.split("/")
             let fileName = urlParts[urlParts.length - 1]
 
@@ -292,29 +271,41 @@ export default function SubtitleGenerator() {
                 fileName = `video_${Date.now()}.mp4`
             }
 
-            console.log("Saving video with filename:", fileName)
-
-            // Create a File object from the Blob (better for upload)
-            const videoFile = new File([videoBlob], fileName, { type: "video/mp4" })
-
-            // Upload to Supabase
-            const result = await uploadProcessedVideo(videoFile, session.user.id, fileName, {
-                language: targetLanguage,
-                sourceLanguage: sourceLanguage === "auto" ? "auto-detected" : sourceLanguage,
-                duration: videoDuration || 0,
+            // Use our new server-side proxy endpoint to handle the CORS issues
+            const response = await fetch('/api/save-to-library', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    videoUrl: processedVideoUrl,
+                    userId: session.user.id,
+                    fileName: fileName,
+                    metadata: {
+                        language: targetLanguage,
+                        sourceLanguage: sourceLanguage === "auto" ? "auto-detected" : sourceLanguage,
+                        duration: videoDuration || 0
+                    }
+                })
             })
 
+            if (!response.ok) {
+                const errorData = await response.json()
+                throw new Error(errorData.error || 'Failed to save video')
+            }
+
+            const result = await response.json()
             console.log("Upload successful:", result)
             setSavedToLibrary(true)
 
             // Reload limits after saving to library
             await loadUserPlanLimits()
-        } catch (error: unknown) {
-            setErrorMessage(`Failed to save to your library: ${error instanceof Error ? error.message : 'An unexpected error occurred'}`)        } finally {
+        } catch (error) {
+            setErrorMessage(`Failed to save to your library: ${error instanceof Error ? error.message : 'An unexpected error occurred'}`)
+        } finally {
             setSaving(false)
         }
     }
-
     // Function to simulate progress for demo purposes
     // Remove this in the real implementation
     useEffect(() => {

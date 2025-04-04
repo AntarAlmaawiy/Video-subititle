@@ -116,7 +116,10 @@ const upload = multer({
 });
 
 // Enable CORS with specific origins
-const allowedOrigins = ['https://www.sub0-translate.com', 'https://sub0-translate.com'];
+const allowedOrigins = [
+    'https://www.sub0-translate.com',
+    'https://sub0-translate.com'
+];
 
 app.use(cors({
     origin: function(origin, callback) {
@@ -124,14 +127,15 @@ app.use(cors({
         if (!origin) return callback(null, true);
 
         if (allowedOrigins.includes(origin)) {
-            callback(null, origin); // Return ONLY the matching origin
+            callback(null, origin); // Return the specific origin that was used
         } else {
             callback(new Error('Not allowed by CORS'));
         }
     },
     methods: ['GET', 'POST', 'OPTIONS'],
     credentials: true,
-    allowedHeaders: ['Content-Type', 'Authorization'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Range'],
+    exposedHeaders: ['Content-Length', 'Content-Range'],
     optionsSuccessStatus: 204
 }));
 
@@ -523,3 +527,44 @@ app.listen(port, () => {
     console.log(`Test the server by visiting http://localhost:${port}/api/test`);
 });
 
+// Add this to your server.js
+app.post('/webhook', express.raw({type: 'application/json'}), async (req, res) => {
+    try {
+        console.log('Webhook received on API server');
+
+        // Basic webhook verification
+        const signature = req.headers['stripe-signature'];
+        const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+
+        let event;
+        try {
+            const body = req.body;
+            event = stripe.webhooks.constructEvent(
+                body,
+                signature,
+                webhookSecret
+            );
+        } catch (err) {
+            console.error(`Webhook signature verification failed: ${err.message}`);
+            return res.status(400).send(`Webhook Error: ${err.message}`);
+        }
+
+        console.log(`Event type: ${event.type}`);
+
+        // Handle the event
+        if (event.type === 'checkout.session.completed') {
+            const session = event.data.object;
+
+            // Process the session
+            console.log(`Processing payment for session: ${session.id}`);
+
+            // Here you would update your database with the subscription info
+        }
+
+        // Return a success response
+        res.json({received: true});
+    } catch (error) {
+        console.error('Webhook processing error:', error);
+        res.status(200).json({error: error.message}); // Still return 200 to acknowledge receipt
+    }
+});
