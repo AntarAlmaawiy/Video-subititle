@@ -48,11 +48,13 @@ const Navbar = () => {
                             {!isAuthenticated ? (
                                 <>
                                     <Link href="/get-started" className="text-gray-700 hover:text-gray-900">Get Started</Link>
-                                    <Link href="/#pricing" className="text-gray-700 hover:text-gray-900">Pricing</Link>                                </>
+                                    <Link href="/#pricing" className="text-gray-700 hover:text-gray-900">Pricing</Link>
+                                </>
                             ) : (
                                 <>
                                     <Link href="/dashboard/manage-plan" className="text-gray-700 hover:text-gray-900">Manage Plan</Link>
                                     <Link href="/dashboard" className="text-gray-700 hover:text-gray-900">Dashboard</Link>
+                                    <Link href="/dashboard/subtitle-generator" className="text-gray-700 hover:text-gray-900">Subtitle Generator</Link>
                                 </>
                             )}
                         </div>
@@ -161,7 +163,7 @@ const Navbar = () => {
                         ) : (
                             <>
                                 <Link
-                                    href="/manage-plan"
+                                    href="/dashboard/manage-plan"
                                     className="block px-3 py-2 rounded-md text-base font-medium text-gray-700 hover:text-gray-900 hover:bg-gray-50"
                                     onClick={toggleMenu}
                                 >
@@ -175,7 +177,7 @@ const Navbar = () => {
                                     Dashboard
                                 </Link>
                                 <Link
-                                    href="/subtitle-generator"
+                                    href="/dashboard/subtitle-generator"
                                     className="block px-3 py-2 rounded-md text-base font-medium text-gray-700 hover:text-gray-900 hover:bg-gray-50"
                                     onClick={toggleMenu}
                                 >
