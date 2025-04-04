@@ -1,13 +1,29 @@
+//api/save-to-library/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 
-// Initialize admin Supabase client
+// Initialize admin Supabase client with your existing environment variable names
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
-const adminSupabase = createClient(supabaseUrl, supabaseServiceKey);
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_KEY || '';
+
+// Check if required environment variables are set
+if (!supabaseUrl || !supabaseServiceKey) {
+    console.error('Missing required Supabase environment variables');
+}
+
+// Create the client only if we have the required credentials
+const getAdminSupabase = () => {
+    if (!supabaseUrl || !supabaseServiceKey) {
+        throw new Error('Supabase credentials are not configured');
+    }
+    return createClient(supabaseUrl, supabaseServiceKey);
+};
 
 export async function POST(request: NextRequest) {
     try {
+        // Only create the client when handling a request
+        const adminSupabase = getAdminSupabase();
+
         const { videoUrl, userId, fileName, metadata } = await request.json();
 
         if (!videoUrl || !userId || !fileName) {
