@@ -1,4 +1,4 @@
-// app/signup/page.tsx
+// app/signup/page.tsx - updated to use the API route
 "use client";
 
 import { useState } from "react";
@@ -6,55 +6,6 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
 import { signIn } from "next-auth/react";
-import { supabase } from "@/lib/supabase";
-
-// Manual signup function directly in this file to avoid creating a new file
-async function manualSignUp(email: string, password: string, username: string) {
-    try {
-        // Step 1: Create the auth user
-        const { data, error } = await supabase.auth.signUp({
-            email,
-            password,
-        });
-
-        if (error) throw error;
-        if (!data.user) throw new Error("No user returned from signup");
-
-        const userId = data.user.id;
-
-        // Step 2: Manually create the profile
-        const { error: profileError } = await supabase
-            .from('profiles')
-            .insert({
-                id: userId,
-                username,
-                email,
-                created_at: new Date().toISOString(),
-                updated_at: new Date().toISOString()
-            });
-
-        if (profileError) console.error("Error creating profile:", profileError);
-
-        // Step 3: Manually create subscription
-        const { error: subscriptionError } = await supabase
-            .from('user_subscriptions')
-            .insert({
-                user_id: userId,
-                plan_id: 'free',
-                status: 'active',
-                next_billing_date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-                created_at: new Date().toISOString(),
-                updated_at: new Date().toISOString()
-            });
-
-        if (subscriptionError) console.error("Error creating subscription:", subscriptionError);
-
-        return data;
-    } catch (error) {
-        console.error("Manual signup error:", error);
-        throw error;
-    }
-}
 
 export default function SignUpPage() {
     const router = useRouter();
@@ -94,15 +45,27 @@ export default function SignUpPage() {
                 passwordLength: formData.password.length
             });
 
-            // Register the user using our manual signup function
+            // Call our manual signup API
             try {
-                const signUpResult = await manualSignUp(
-                    formData.email,
-                    formData.password,
-                    formData.username
-                );
+                const response = await fetch('/api/manual-signup', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        email: formData.email,
+                        password: formData.password,
+                        username: formData.username,
+                    }),
+                });
 
-                console.log("Sign up successful:", signUpResult);
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.error || 'Failed to create account');
+                }
+
+                console.log("Sign up successful:", data);
                 setSuccess("Account created successfully!");
 
                 // Try to sign in automatically
@@ -121,7 +84,7 @@ export default function SignUpPage() {
                             router.push("/signin");
                         }, 2000);
                     } else {
-                        // Successful sign-in - fixed redirect path
+                        // Successful sign-in
                         router.push("/dashboard/subtitle-generator");
                     }
                 } catch (signInError) {
@@ -132,7 +95,7 @@ export default function SignUpPage() {
                     }, 2000);
                 }
             } catch (signUpError: unknown) {
-                console.error("Supabase signup error:", signUpError);
+                console.error("Signup error:", signUpError);
                 throw new Error(
                     signUpError instanceof Error ? signUpError.message : "Error creating account");
             }
@@ -144,7 +107,6 @@ export default function SignUpPage() {
             setLoading(false);
         }
     };
-
 
     return (
         <div className="flex min-h-screen flex-col items-center justify-center py-12 px-4 sm:px-6 lg:px-8 bg-gray-50">
