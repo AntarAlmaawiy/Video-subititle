@@ -1,4 +1,4 @@
-// app/signup
+// app/signup/page.tsx
 "use client";
 
 import { useState } from "react";
@@ -6,7 +6,55 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
 import { signIn } from "next-auth/react";
-import { signUpWithEmail } from "@/lib/supabase";
+import { supabase } from "@/lib/supabase";
+
+// Manual signup function directly in this file to avoid creating a new file
+async function manualSignUp(email: string, password: string, username: string) {
+    try {
+        // Step 1: Create the auth user
+        const { data, error } = await supabase.auth.signUp({
+            email,
+            password,
+        });
+
+        if (error) throw error;
+        if (!data.user) throw new Error("No user returned from signup");
+
+        const userId = data.user.id;
+
+        // Step 2: Manually create the profile
+        const { error: profileError } = await supabase
+            .from('profiles')
+            .insert({
+                id: userId,
+                username,
+                email,
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString()
+            });
+
+        if (profileError) console.error("Error creating profile:", profileError);
+
+        // Step 3: Manually create subscription
+        const { error: subscriptionError } = await supabase
+            .from('user_subscriptions')
+            .insert({
+                user_id: userId,
+                plan_id: 'free',
+                status: 'active',
+                next_billing_date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString()
+            });
+
+        if (subscriptionError) console.error("Error creating subscription:", subscriptionError);
+
+        return data;
+    } catch (error) {
+        console.error("Manual signup error:", error);
+        throw error;
+    }
+}
 
 export default function SignUpPage() {
     const router = useRouter();
@@ -46,9 +94,9 @@ export default function SignUpPage() {
                 passwordLength: formData.password.length
             });
 
-            // Register the user in Supabase
+            // Register the user using our manual signup function
             try {
-                const signUpResult = await signUpWithEmail(
+                const signUpResult = await manualSignUp(
                     formData.email,
                     formData.password,
                     formData.username
@@ -73,8 +121,8 @@ export default function SignUpPage() {
                             router.push("/signin");
                         }, 2000);
                     } else {
-                        // Successful sign-in
-                        router.push("/subtitle-generator");
+                        // Successful sign-in - fixed redirect path
+                        router.push("/dashboard/subtitle-generator");
                     }
                 } catch (signInError) {
                     console.error("Error during automatic sign in:", signInError);
@@ -92,7 +140,7 @@ export default function SignUpPage() {
         } catch (error: unknown) {
             console.error("Sign up error:", error);
             setError(error instanceof Error ? error.message : "An error occurred during sign up");
-        }finally {
+        } finally {
             setLoading(false);
         }
     };
