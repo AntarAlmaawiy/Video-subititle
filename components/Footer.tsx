@@ -42,7 +42,7 @@ const Footer = () => {
                         <h3 className="text-sm font-semibold text-gray-300 tracking-wider uppercase">Contact</h3>
                         <ul className="mt-4 space-y-2">
                             <li className="text-gray-400">
-                                Email: support@subtranslate.com
+                                Email: support@subtranslation.com
                             </li>
                             <li>
                                 <Link href="/contact" className="text-gray-400 hover:text-white">

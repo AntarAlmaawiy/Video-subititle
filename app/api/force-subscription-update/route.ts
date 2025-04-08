@@ -9,7 +9,7 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || '', {
 });
 
 // Define the custom status type to include our "canceling" status
-type ExtendedStatus = Stripe.Subscription.Status | 'canceling';
+type ExtendedStatus = Stripe.Subscription.Status | 'canceling' | 'canceled';
 
 export async function GET() {
     try {
@@ -22,7 +22,6 @@ export async function GET() {
         const adminSupabase = getAdminSupabase();
         console.log(`Force sync requested for user: ${session.user.id}`);
 
-
         // Get current subscription
         const { data: currentSub, error: subError } = await adminSupabase
             .from('user_subscriptions')
@@ -32,12 +31,19 @@ export async function GET() {
 
         if (subError && subError.code !== 'PGRST116') {
             console.error('Error fetching subscription:', subError);
-            return NextResponse.json({ error: subError.message }, { status: 500 });
+
+            // Instead of failing, just return what we know
+            return NextResponse.json({
+                success: false,
+                message: 'Could not fetch subscription from database',
+                error: subError.message
+            });
         }
 
         console.log(`Current subscription in database:`, currentSub);
 
-        // If we have a Stripe subscription ID, verify with Stripe
+        // If we have a Stripe subscription ID, try to verify with Stripe
+        // but don't fail if it doesn't exist in Stripe
         if (currentSub?.stripe_subscription_id) {
             try {
                 console.log(`Fetching subscription ${currentSub.stripe_subscription_id} from Stripe`);
@@ -46,9 +52,6 @@ export async function GET() {
                 console.log(`Stripe cancel_at_period_end: ${subscription.cancel_at_period_end}`);
 
                 // Check if this subscription is set to cancel at period end in Stripe
-                // In app/api/force-subscription-update/route.ts
-// Find the section where you check for cancel_at_period_end
-
                 if (subscription.cancel_at_period_end) {
                     console.log(`Subscription ${subscription.id} is marked for cancellation in Stripe`);
 
@@ -56,18 +59,11 @@ export async function GET() {
                     const { data: cancelData, error: cancelError } = await adminSupabase
                         .from('user_subscriptions')
                         .update({
-                            status: 'canceled' as never, // Changed from 'canceling'
+                            status: 'canceled' as never,
                             updated_at: new Date().toISOString()
                         })
                         .eq('user_id', session.user.id)
                         .select();
-
-                    // const { data: cancelData, error: cancelError } = await adminSupabase
-                    //     .from('user_subscriptions')
-                    //     .update({
-                    //         status: 'canceled' as SubscriptionStatus,
-                    //         updated_at: new Date().toISOString()
-                    //     })
 
                     if (cancelError) {
                         console.error(`Error updating to canceled status: ${cancelError.message}`);
@@ -107,13 +103,13 @@ export async function GET() {
 
                     if (error) {
                         console.error('Error updating subscription status:', error);
-                        return NextResponse.json({ error: error.message }, { status: 500 });
+                        // Don't fail the request
                     }
 
                     return NextResponse.json({
                         success: true,
                         message: 'Maintained Elite plan with updated status',
-                        subscription: data[0]
+                        subscription: data ? data[0] : currentSub
                     });
                 }
 
@@ -156,6 +152,7 @@ export async function GET() {
                             }
                         } catch (err) {
                             console.error('Error fetching product:', err);
+                            // Continue anyway
                         }
                     }
                 }
@@ -181,8 +178,8 @@ export async function GET() {
                 // Special handling for subscriptions marked for cancellation
                 let statusToUse: ExtendedStatus = subscription.status;
                 if (subscription.cancel_at_period_end) {
-                    statusToUse = 'canceling' as ExtendedStatus;
-                    console.log('Setting status to "canceling" because cancel_at_period_end is true');
+                    statusToUse = 'canceled' as ExtendedStatus;
+                    console.log('Setting status to "canceled" because cancel_at_period_end is true');
                 }
 
                 // Update the subscription with appropriate type handling
@@ -197,18 +194,13 @@ export async function GET() {
                     .eq('user_id', session.user.id)
                     .select();
 
-                // const { data, error } = await adminSupabase
-                //     .from('user_subscriptions')
-                //     .update({
-                //         plan_id: stripePlanId,
-                //         status: statusToUse as SubscriptionStatus,
-                //         next_billing_date: new Date(subscription.current_period_end * 1000).toISOString().split('T')[0],
-                //         updated_at: new Date().toISOString()
-                //     })
-
                 if (error) {
                     console.error('Error updating subscription:', error);
-                    return NextResponse.json({ error: error.message }, { status: 500 });
+                    return NextResponse.json({
+                        success: false,
+                        error: error.message,
+                        message: 'Database update failed but Stripe data was retrieved'
+                    }, { status: 500 });
                 }
 
                 return NextResponse.json({
@@ -218,19 +210,47 @@ export async function GET() {
                 });
             } catch (stripeErr) {
                 console.error('Error retrieving subscription from Stripe:', stripeErr);
+
+                // If we can't get the subscription from Stripe, check if it might be due to test/live mode mismatch
+                // Instead of failing, update the status to 'canceled' in the database
+                const { data: cancelData, error: cancelError } = await adminSupabase
+                    .from('user_subscriptions')
+                    .update({
+                        status: 'canceled' as never,
+                        updated_at: new Date().toISOString()
+                    })
+                    .eq('user_id', session.user.id)
+                    .select();
+
+                if (cancelError) {
+                    console.error('Error updating to canceled status:', cancelError);
+                    return NextResponse.json({
+                        success: false,
+                        message: 'Failed to update subscription status in database',
+                        stripeError: stripeErr instanceof Error ? stripeErr.message : 'Unknown Stripe error'
+                    }, { status: 500 });
+                }
+
                 return NextResponse.json({
-                    error: 'Could not retrieve subscription from Stripe'
-                }, { status: 500 });
+                    success: true,
+                    message: 'Subscription marked as canceled due to Stripe retrieval error',
+                    subscription: cancelData[0]
+                });
             }
         }
 
+        // If no Stripe subscription found, just return what we have
         return NextResponse.json({
-            success: false,
+            success: true,
             message: 'No Stripe subscription found to update',
             currentSubscription: currentSub || null
         });
     } catch (err) {
         console.error('Error in force update endpoint:', err);
-        return NextResponse.json({ error: 'Server error' }, { status: 500 });
+        return NextResponse.json({
+            success: false,
+            error: err instanceof Error ? err.message : 'Unknown server error',
+            message: 'Server error'
+        }, { status: 500 });
     }
 }

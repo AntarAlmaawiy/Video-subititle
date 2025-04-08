@@ -41,9 +41,10 @@ const Pricing = () => {
             features: [
                 { name: '1 free video translate per day', included: true },
                 { name: '500MB storage', included: true },
-                { name: 'Basic subtitle editing', included: true },
+                { name: 'Basic subtitle', included: true },
                 { name: 'Support for 100+ languages', included: true },
                 { name: 'Standard quality AI', included: true },
+                { name: 'Basic users', included: true },
                 { name: 'Email support', included: true },
             ]
         },
@@ -58,9 +59,10 @@ const Pricing = () => {
             features: [
                 { name: '5 video translates per day', included: true },
                 { name: '15GB storage', included: true },
-                { name: 'Advanced subtitle editing', included: true },
+                { name: 'Advanced subtitle', included: true },
                 { name: 'Support for 100+ languages', included: true },
                 { name: 'Enhanced quality AI', included: true },
+                { name: 'Content creators', included: true },
                 { name: 'Priority email support', included: true },
             ],
             recommended: true
@@ -76,9 +78,10 @@ const Pricing = () => {
             features: [
                 { name: '30 video translates per day', included: true },
                 { name: '10GB storage', included: true },
-                { name: 'Professional subtitle editing', included: true },
+                { name: 'Professional subtitle', included: true },
                 { name: 'Support for 100+ languages', included: true },
                 { name: 'Premium quality AI', included: true },
+                { name: 'Power creators', included: true },
                 { name: 'Priority 24/7 support', included: true },
             ]
         },

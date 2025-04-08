@@ -53,21 +53,28 @@ export async function POST() {
         console.log(`Found Stripe subscription: ${userSubscription.stripe_subscription_id}`);
 
         try {
-            // Cancel the subscription in Stripe (at period end)
-            const canceledSubscription = await stripe.subscriptions.update(
-                userSubscription.stripe_subscription_id,
-                {
-                    cancel_at_period_end: true,
-                    metadata: {
-                        cancelRequested: 'true',
-                        cancelRequestTime: new Date().toISOString()
+            // Try to cancel the subscription in Stripe, but don't fail if it doesn't exist
+            try {
+                // Cancel the subscription in Stripe (at period end)
+                const canceledSubscription = await stripe.subscriptions.update(
+                    userSubscription.stripe_subscription_id,
+                    {
+                        cancel_at_period_end: true,
+                        metadata: {
+                            cancelRequested: 'true',
+                            cancelRequestTime: new Date().toISOString()
+                        }
                     }
-                }
-            );
+                );
 
-            console.log(`Subscription updated in Stripe, status: ${canceledSubscription.status}, cancel_at_period_end: ${canceledSubscription.cancel_at_period_end}`);
+                console.log(`Subscription updated in Stripe, status: ${canceledSubscription.status}, cancel_at_period_end: ${canceledSubscription.cancel_at_period_end}`);
+            } catch (stripeUpdateError) {
+                // If the subscription doesn't exist in Stripe, log the error but continue
+                console.error('Error updating subscription in Stripe:', stripeUpdateError);
+                console.log('Continuing with database update anyway...');
+            }
 
-            // Update only this specific user's subscription
+            // Update only this specific user's subscription in the database anyway
             const { error: updateError } = await adminSupabase
                 .from('user_subscriptions')
                 .update({
@@ -117,29 +124,20 @@ export async function POST() {
                 }
             }
 
-            const { error: sqlError } = await adminSupabase.rpc(
-                'cancel_user_subscription',
-                { user_id_param: userId }
-            );
+            try {
+                // Try to execute the SQL function but don't stop if it fails
+                const { error: sqlError } = await adminSupabase.rpc(
+                    'cancel_user_subscription',
+                    { user_id_param: userId }
+                );
 
-            if (sqlError) {
-                console.error('Error executing SQL function:', sqlError);
-
-                // Fall back to direct update
-                const { error: updateError } = await adminSupabase
-                    .from('user_subscriptions')
-                    .update({
-                        status: 'canceled',
-                        updated_at: new Date().toISOString()
-                    })
-                    .eq('user_id', userId);
-
-                if (updateError) {
-                    console.error('Error updating subscription:', updateError);
-                    return NextResponse.json({ message: 'Database update failed' }, { status: 500 });
+                if (sqlError) {
+                    console.error('Error executing SQL function:', sqlError);
+                } else {
+                    console.log('Successfully canceled subscription via SQL function');
                 }
-            } else {
-                console.log('Successfully canceled subscription via SQL function');
+            } catch (rpcError) {
+                console.error('RPC error:', rpcError);
             }
 
             return NextResponse.json({
@@ -150,6 +148,29 @@ export async function POST() {
             });
         } catch (stripeError: unknown) {
             console.error('Stripe cancellation error:', stripeError);
+
+            // Update the database status anyway even if Stripe operations fail
+            try {
+                const { error: fallbackError } = await adminSupabase
+                    .from('user_subscriptions')
+                    .update({
+                        status: 'canceled',
+                        updated_at: new Date().toISOString()
+                    })
+                    .eq('user_id', userId);
+
+                if (!fallbackError) {
+                    // If we successfully updated the database, return success
+                    return NextResponse.json({
+                        success: true,
+                        message: 'Subscription marked as canceled in database',
+                        status: 'canceled'
+                    });
+                }
+            } catch (fallbackUpdateError) {
+                console.error('Fallback update failed:', fallbackUpdateError);
+            }
+
             return NextResponse.json(
                 {
                     message: `Error canceling subscription: ${stripeError instanceof Error ? stripeError.message : 'An unexpected error occurred'}`},
@@ -163,5 +184,4 @@ export async function POST() {
             { status: 500 }
         );
     }
-
 }

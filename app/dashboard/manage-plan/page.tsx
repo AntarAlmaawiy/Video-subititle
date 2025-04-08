@@ -14,56 +14,11 @@ import {
     HardDrive,
     Loader2,
     RefreshCw,
-    AlertTriangle,
 } from "lucide-react"
 import { toast } from "react-hot-toast"
 import ConfirmationModal from "@/components/ConfirmationModal"
 
-// TestModeToggle Component
-interface TestModeToggleProps {
-    isTestMode: boolean
-    setIsTestMode: React.Dispatch<React.SetStateAction<boolean>>
-}
 
-const TestModeToggle: React.FC<TestModeToggleProps> = ({ isTestMode, setIsTestMode }) => {
-    return (
-        <div className="mb-4 p-3 bg-yellow-100 border border-yellow-300 rounded-md shadow-sm">
-            <div className="flex items-center justify-between">
-                <div className="flex items-center">
-                    <div className="relative inline-block w-10 mr-2 align-middle select-none">
-                        <input
-                            type="checkbox"
-                            name="testMode"
-                            id="testMode"
-                            checked={isTestMode}
-                            onChange={() => setIsTestMode(!isTestMode)}
-                            className="absolute block w-6 h-6 bg-white border-4 rounded-full appearance-none cursor-pointer checked:right-0 checked:border-green-500 focus:outline-none duration-200"
-                        />
-                        <label
-                            htmlFor="testMode"
-                            className={`block h-6 overflow-hidden rounded-full cursor-pointer ${
-                                isTestMode ? "bg-green-400" : "bg-gray-300"
-                            }`}
-                        ></label>
-                    </div>
-                    <span className="font-medium text-gray-700">{isTestMode ? "Test Mode ON" : "Test Mode OFF"}</span>
-                </div>
-                <div className="text-xs text-gray-500">
-                    {isTestMode
-                        ? "Using Stripe test environment - no real charges will be made"
-                        : "Using production environment - real charges will be made"}
-                </div>
-            </div>
-
-            {isTestMode && (
-                <div className="mt-2 text-sm">
-                    <p className="font-medium">Test card: 4242 4242 4242 4242</p>
-                    <p>Any future date, any 3 digits for CVC, any postal code</p>
-                </div>
-            )}
-        </div>
-    )
-}
 // Plan types
 interface PlanFeature {
     name: string
@@ -106,7 +61,6 @@ export default function ManagePlanPage() {
     const [error, setError] = useState<string | null>(null)
     const [processingPayment, setProcessingPayment] = useState(false)
     const [loadAttempted, setLoadAttempted] = useState(false)
-    const [isTestMode, setIsTestMode] = useState(false)
 
     // Modal states
     const [showCancelModal, setShowCancelModal] = useState(false)
@@ -140,9 +94,10 @@ export default function ManagePlanPage() {
                 features: [
                     { name: "1 free video translate per day", included: true },
                     { name: "500MB storage", included: true },
-                    { name: "Basic subtitle editing", included: true },
+                    { name: "Basic subtitle", included: true },
                     { name: "Support for 100+ languages", included: true },
                     { name: "Standard quality AI", included: true },
+                    { name: "Basic users", included: true },
                     { name: "Email support", included: true },
                 ],
             },
@@ -158,9 +113,10 @@ export default function ManagePlanPage() {
                 features: [
                     { name: "10 video translates per day", included: true },
                     { name: "5GB storage", included: true },
-                    { name: "Advanced subtitle editing", included: true },
+                    { name: "Advanced subtitle", included: true },
                     { name: "Support for 100+ languages", included: true },
                     { name: "Enhanced quality AI", included: true },
+                    { name: "Content creators", included: true },
                     { name: "Priority email support", included: true },
                 ],
                 recommended: true,
@@ -177,9 +133,10 @@ export default function ManagePlanPage() {
                 features: [
                     { name: "30 video translates per day", included: true },
                     { name: "10GB storage", included: true },
-                    { name: "Professional subtitle editing", included: true },
+                    { name: "Professional subtitle", included: true },
                     { name: "Support for 100+ languages", included: true },
                     { name: "Premium quality AI", included: true },
+                    { name: "Power creators", included: true },
                     { name: "Priority 24/7 support", included: true },
                 ],
             },
@@ -494,101 +451,93 @@ export default function ManagePlanPage() {
 // Now replace your existing useEffect with this one
     useEffect(() => {
         if (typeof window !== "undefined") {
-            const urlParams = new URLSearchParams(window.location.search)
-            const success = urlParams.get("success")
+            const urlParams = new URLSearchParams(window.location.search);
+            const success = urlParams.get("success");
 
             if (success === "true") {
                 // Check if we have session before proceeding
                 if (status === "authenticated" && session?.user?.id) {
-                    toast.success("Payment successful! Your subscription is being updated...")
-
-                    // Get test mode from localStorage
-                    const wasTestMode = localStorage.getItem("checkoutTestMode") === "true"
-                    if (wasTestMode) {
-                        console.log("This was a test mode checkout")
-                    }
+                    toast.success("Payment successful! Your subscription is being updated...");
 
                     // Force a direct refresh from the database
                     const checkSubscription = async () => {
                         try {
-                            const response = await fetch("/api/user-subscription")
+                            const response = await fetch("/api/user-subscription");
                             if (response.ok) {
-                                const data = await response.json()
-                                console.log("Subscription after payment:", data.subscription)
-                                await refreshSubscription()
+                                const data = await response.json();
+                                console.log("Subscription after payment:", data.subscription);
+                                await refreshSubscription();
                             }
                         } catch (err) {
-                            console.error("Error checking subscription:", err)
+                            console.error("Error checking subscription:", err);
                         }
-                    }
+                    };
 
                     // Give the webhook a chance to process
-                    setTimeout(checkSubscription, 2000)
+                    setTimeout(checkSubscription, 2000);
 
                     // Also run our direct check after a bit more time
-                    setTimeout(checkDirectSubscriptionStatus, 4000)
+                    setTimeout(checkDirectSubscriptionStatus, 4000);
                 } else {
                     // Save the success state and check after authentication
-                    localStorage.setItem("pendingSubscriptionCheck", "true")
+                    localStorage.setItem("pendingSubscriptionCheck", "true");
                 }
 
                 // Clean up URL
-                window.history.replaceState({}, document.title, window.location.pathname)
+                window.history.replaceState({}, document.title, window.location.pathname);
             }
         }
-    }, [status, session?.user?.id, refreshSubscription, checkDirectSubscriptionStatus])
+    }, [status, session?.user?.id, refreshSubscription, checkDirectSubscriptionStatus]);
 
-    // Check localStorage for pending checkout
+
     const checkPendingCheckout = useCallback(async () => {
         // Don't proceed if not authenticated
         if (status !== "authenticated" || !session?.user?.id) {
-            console.log("User not authenticated, delaying checkout verification")
-            return
+            console.log("User not authenticated, delaying checkout verification");
+            return;
         }
 
         if (typeof window !== "undefined") {
-            const pendingCheckout = localStorage.getItem("pendingCheckout")
-            const checkoutTime = localStorage.getItem("checkoutTime")
+            const pendingCheckout = localStorage.getItem("pendingCheckout");
+            const checkoutTime = localStorage.getItem("checkoutTime");
 
             if (pendingCheckout === "true" && checkoutTime) {
                 // Check if this is recent (within last 10 minutes)
-                const timeElapsed = Date.now() - Number.parseInt(checkoutTime)
-                const isRecent = timeElapsed < 10 * 60 * 1000 // 10 minutes
+                const timeElapsed = Date.now() - Number.parseInt(checkoutTime);
+                const isRecent = timeElapsed < 10 * 60 * 1000; // 10 minutes
 
                 if (isRecent) {
-                    console.log("Detected recent checkout. Refreshing subscription data...")
+                    console.log("Detected recent checkout. Refreshing subscription data...");
 
                     toast.loading("Checking subscription status...", {
                         id: "checking-subscription",
-                    })
+                    });
 
                     // Call refreshSubscription only if we have a valid session
                     setTimeout(async () => {
-                        const success = await refreshSubscription()
+                        const success = await refreshSubscription();
 
                         if (success) {
-                            localStorage.removeItem("pendingCheckout")
-                            localStorage.removeItem("checkoutTime")
-                            localStorage.removeItem("checkoutTestMode")
+                            localStorage.removeItem("pendingCheckout");
+                            localStorage.removeItem("checkoutTime");
 
                             toast.success("Subscription updated successfully", {
                                 id: "checking-subscription",
-                            })
+                            });
                         } else {
                             toast.error("Could not verify subscription status", {
                                 id: "checking-subscription",
-                            })
+                            });
                         }
-                    }, 2000)
+                    }, 2000);
                 } else {
                     // Clean up old data
-                    localStorage.removeItem("pendingCheckout")
-                    localStorage.removeItem("checkoutTime")
-                    localStorage.removeItem("checkoutTestMode")
+                    localStorage.removeItem("pendingCheckout");
+                    localStorage.removeItem("checkoutTime");
                 }
             }
         }
-    }, [session?.user?.id, status, refreshSubscription])
+    }, [session?.user?.id, status, refreshSubscription]);
 
     // Check on component mount
     useEffect(() => {
@@ -614,7 +563,6 @@ export default function ManagePlanPage() {
     }, [status, router, session?.user?.id, fetchUserData, loadAttempted, checkPendingCheckout])
 
     // Handle checkout with Stripe
-    // Handle checkout with Stripe
     const handleUpgrade = async (planId: string) => {
         if (!session?.user?.id) {
             router.push("/signin");
@@ -623,7 +571,6 @@ export default function ManagePlanPage() {
 
         console.log("Starting upgrade process:");
         console.log(`Plan ID: ${planId}`);
-        console.log(`Test Mode: ${isTestMode}`);
         console.log(`Billing Cycle: ${activeTab}`);
 
         setSelectedPlan(planId);
@@ -636,28 +583,12 @@ export default function ManagePlanPage() {
             const profileData = await profileResponse.json();
             console.log("Profile check result:", profileData);
 
-            // If in test mode, first call the reset endpoint to clear existing customer ID
-            if (isTestMode) {
-                try {
-                    console.log("Test mode active - resetting stripe customer ID first");
-                    const resetResponse = await fetch("/api/reset-stripe-customer");
-                    const resetData = await resetResponse.json();
-                    console.log("Reset response:", resetData);
-                } catch (resetErr) {
-                    console.error("Failed to reset customer ID:", resetErr);
-                    // Continue anyway
-                }
-            }
-
             // Create a timeout to reset loading state if it takes too long
             const loadingTimeout = setTimeout(() => {
                 console.log("Checkout process timed out");
                 setProcessingPayment(false);
                 toast.error("Checkout process timed out. Please try again.");
             }, 15000); // 15 seconds timeout
-
-            // Ensure test mode is saved to localStorage
-            localStorage.setItem("checkoutTestMode", isTestMode ? "true" : "false");
 
             // Create checkout session with Stripe
             const response = await fetch("/api/create-checkout-session", {
@@ -668,9 +599,6 @@ export default function ManagePlanPage() {
                 body: JSON.stringify({
                     planId: planId,
                     billingCycle: activeTab,
-                    testMode: isTestMode,
-                    forceNewCustomer: isTestMode, // Force new customer in test mode
-                    clearExistingCustomer: isTestMode, // Clear any existing customer ID in test mode
                     timestamp: Date.now(), // Prevent caching
                 }),
             });
@@ -719,6 +647,7 @@ export default function ManagePlanPage() {
             setProcessingPayment(false);
         }
     };
+
     // Show cancel confirmation modal
     const handleCancel = async () => {
         if (!session?.user?.id) return
@@ -728,61 +657,57 @@ export default function ManagePlanPage() {
     // Process cancellation after confirmation
     const confirmCancel = async () => {
         try {
-            setProcessingPayment(true)
-            setShowCancelModal(false) // Close the modal
+            setProcessingPayment(true);
+            setShowCancelModal(false); // Close the modal
 
             // Force UI update immediately for better UX
             setCurrentSubscription((prev) => ({
                 ...prev,
                 status: "canceled", // Use 'canceled' not 'canceling'
-            }))
+            }));
 
             // Cancel subscription in your database and with Stripe
             const response = await fetch("/api/cancel-subscription", {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json",
-                },
-                body: JSON.stringify({
-                    testMode: isTestMode, // Include test mode flag
-                }),
-            })
+                }
+            });
 
             // First log the raw response for debugging
-            console.log("Raw cancel response:", response)
+            console.log("Raw cancel response:", response);
 
-            const data = await response.json()
-            console.log("Cancellation response data:", data)
+            const data = await response.json();
+            console.log("Cancellation response data:", data);
 
             if (!response.ok) {
-                throw new Error(data.message || "Failed to cancel subscription")
+                throw new Error(data.message || "Failed to cancel subscription");
             }
 
             toast.success(
                 "Your subscription has been canceled. You will be downgraded to Free at the end of your billing cycle.",
-            )
+            );
 
             // Reload the data after a short delay
             setTimeout(async () => {
-                await refreshSubscription()
+                await refreshSubscription();
 
                 // Make sure UI shows canceled status
                 setCurrentSubscription((prev) => ({
                     ...prev,
                     status: "canceled", // Use 'canceled' not 'canceling'
-                }))
-            }, 1500)
+                }));
+            }, 1500);
         } catch (err: unknown) {
-            console.error("Error canceling subscription:", err)
-            toast.error(err instanceof Error ? err.message : "Failed to cancel subscription")
+            console.error("Error canceling subscription:", err);
+            toast.error(err instanceof Error ? err.message : "Failed to cancel subscription");
 
             // Revert UI if there was an error
-            refreshSubscription()
+            refreshSubscription();
         } finally {
-            setProcessingPayment(false)
+            setProcessingPayment(false);
         }
-    }
-
+    };
     // Show renew confirmation modal
     const handleRenew = async () => {
         if (!session?.user?.id) return
@@ -792,48 +717,45 @@ export default function ManagePlanPage() {
     // Process renewal after confirmation
     const confirmRenew = async () => {
         try {
-            setProcessingPayment(true)
-            setShowRenewModal(false) // Close the modal
+            setProcessingPayment(true);
+            setShowRenewModal(false); // Close the modal
 
             // Call your renewal API endpoint
             const response = await fetch("/api/renew-subscription", {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json",
-                },
-                body: JSON.stringify({
-                    testMode: isTestMode, // Include test mode flag
-                }),
-            })
+                }
+            });
 
-            const data = await response.json()
+            const data = await response.json();
 
             if (!response.ok) {
-                throw new Error(data.message || "Failed to renew subscription")
+                throw new Error(data.message || "Failed to renew subscription");
             }
 
             // Update UI immediately
             setCurrentSubscription((prev) => ({
                 ...prev,
                 status: "active",
-            }))
+            }));
 
-            toast.success("Your subscription has been renewed successfully!")
+            toast.success("Your subscription has been renewed successfully!");
 
             // Refresh the subscription data
             setTimeout(() => {
-                refreshSubscription()
-            }, 1500)
+                refreshSubscription();
+            }, 1500);
         } catch (err) {
-            console.error("Error renewing subscription:", err)
-            toast.error(err instanceof Error ? err.message : "Failed to renew subscription")
+            console.error("Error renewing subscription:", err);
+            toast.error(err instanceof Error ? err.message : "Failed to renew subscription");
 
             // Refresh the subscription data even on error
-            refreshSubscription()
+            refreshSubscription();
         } finally {
-            setProcessingPayment(false)
+            setProcessingPayment(false);
         }
-    }
+    };
 
     if (loading || status === "loading") {
         return (
@@ -849,26 +771,6 @@ export default function ManagePlanPage() {
                 <h1 className="text-center text-4xl font-bold mb-2">Manage Your Plan</h1>
                 <p className="text-center text-gray-600 mb-8">Choose the perfect plan for your subtitle translation needs</p>
 
-                {/* Test Mode Toggle - Add this near the top */}
-                <div className="max-w-4xl mx-auto mb-6">
-                    <TestModeToggle isTestMode={isTestMode} setIsTestMode={setIsTestMode} />
-                </div>
-
-                {/* Test Mode Warning */}
-                {isTestMode && (
-                    <div className="max-w-4xl mx-auto mb-6">
-                        <div className="bg-yellow-100 border-l-4 border-yellow-500 text-yellow-700 p-4 rounded flex items-start">
-                            <AlertTriangle className="h-5 w-5 text-yellow-500 mr-3 mt-0.5 flex-shrink-0" />
-                            <div>
-                                <p className="font-medium">Test mode is active</p>
-                                <p className="text-sm mt-1">
-                                    No actual charges will be made. Use test card 4242 4242 4242 4242 with any future expiration date and
-                                    any 3-digit CVC.
-                                </p>
-                            </div>
-                        </div>
-                    </div>
-                )}
 
                 {error && <div className="max-w-4xl mx-auto bg-red-50 p-4 rounded-md mb-6 text-red-600">{error}</div>}
 
