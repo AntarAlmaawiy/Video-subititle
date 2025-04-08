@@ -5,12 +5,10 @@ import {redirect} from "next/navigation";
 export default async function DashboardPage() {
     const session = await auth();
     if (!session || !session.user) {
-        redirect('/signing');
-
+        redirect('/signin');
     }
 
     return (
-
         <div className="space-y-6">
             <div className="bg-white p-8 rounded-lg shadow">
                 <h1 className="text-2xl font-bold text-gray-900 mb-4">Dashboard</h1>
@@ -47,7 +45,6 @@ function DashboardCard({ title, description, link }: { title: string; descriptio
             href={link}
             className="block bg-white p-6 rounded-lg shadow hover:shadow-md transition-shadow duration-300"
         >
-
             <h2 className="text-lg font-semibold text-gray-900 mb-2">{title}</h2>
             <p className="text-gray-600">{description}</p>
         </a>
