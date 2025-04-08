@@ -25,15 +25,37 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
 });
 // User authentication functions
 export const signUpWithEmail = async (email: string, password: string, username: string) => {
+    // First sign up the user
     const { data, error } = await supabase.auth.signUp({
         email,
         password,
-        options: {
-            data: { username },
-        },
     });
 
     if (error) throw error;
+
+    // Manually create profile if user created successfully
+    if (data.user) {
+        // Add a small delay to ensure auth record is fully created
+        await new Promise(resolve => setTimeout(resolve, 500));
+
+        // Manually insert profile
+        const { error: profileError } = await supabase
+            .from('profiles')
+            .insert({
+                id: data.user.id,
+                username: username,
+                email: email,
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString(),
+                // Add any other required fields here
+            });
+
+        if (profileError) {
+            console.error('Error creating profile:', profileError);
+            // Consider throwing this error or handling accordingly
+        }
+    }
+
     return data;
 };
 
