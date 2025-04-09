@@ -44,12 +44,3 @@ export async function middleware(request: NextRequest) {
 
     return NextResponse.next();
 }
-
-// Configure paths that trigger the middleware
-export const config = {
-    matcher: [
-        // Match all paths except these
-        "/((?!_next|api/auth|public|signin|signup|favicon.ico).*)",
-        "/dashboard/:path*" // Specifically match dashboard paths
-    ],
-};

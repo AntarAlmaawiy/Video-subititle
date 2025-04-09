@@ -89,9 +89,10 @@ function SignInForm() {
                 return;
             }
 
-            // Success!
-            setDebug(prev => `${prev}\nNextAuth authentication successful!`);
-            router.push(callbackUrl);
+            // Success! Use the actual callback URL or default to dashboard
+            const redirectPath = callbackUrl || "/dashboard";
+            console.log("Redirecting to:", redirectPath);
+            router.push(redirectPath);
         } catch (error: unknown) {
             console.error("Sign in error:", error);
             setError("An error occurred during sign in");
