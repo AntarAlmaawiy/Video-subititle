@@ -26,21 +26,8 @@ export async function POST(request: Request) {
             }
         });
 
-        // BYPASS auth.users table completely - use direct SQL to insert into profiles and subscriptions
-        console.log('Creating profile and subscription directly with SQL');
-
-        // Create a random UUID for the user
-        const { data: uuidData } = await supabaseAdmin.rpc('uuid_generate_v4');
-        const userId = uuidData;
-
-        if (!userId) {
-            console.error('Failed to generate UUID');
-            return NextResponse.json({ error: 'Failed to generate user ID' }, { status: 500 });
-        }
-
-        console.log(`Generated user ID: ${userId}`);
-
-        // Now create the auth user with admin API
+        console.log('Creating user with admin API');
+        // Create the user directly with admin API
         const { data, error } = await supabaseAdmin.auth.admin.createUser({
             email,
             password,
@@ -60,15 +47,16 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: 'No user created' }, { status: 500 });
         }
 
-        const authUserId = data.user.id;
-        console.log(`User created successfully with ID: ${authUserId}`);
+        const userId = data.user.id;
+        console.log(`User created successfully with ID: ${userId}`);
 
         // Try to create profile manually
         const timestamp = new Date().toISOString();
+        console.log('Creating profile for user');
         const { error: profileError } = await supabaseAdmin
             .from('profiles')
             .insert({
-                id: authUserId,
+                id: userId,
                 username,
                 email,
                 created_at: timestamp,
@@ -77,16 +65,18 @@ export async function POST(request: Request) {
 
         if (profileError) {
             console.error('Error creating profile:', profileError);
+            // Continue anyway
         } else {
             console.log('Profile created successfully');
         }
 
         // Try to create subscription manually
+        console.log('Creating subscription for user');
         const nextBillingDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
         const { error: subscriptionError } = await supabaseAdmin
             .from('user_subscriptions')
             .insert({
-                user_id: authUserId,
+                user_id: userId,
                 plan_id: 'free',
                 status: 'active',
                 next_billing_date: nextBillingDate,
@@ -96,6 +86,7 @@ export async function POST(request: Request) {
 
         if (subscriptionError) {
             console.error('Error creating subscription:', subscriptionError);
+            // Continue anyway
         } else {
             console.log('Subscription created successfully');
         }
@@ -104,7 +95,7 @@ export async function POST(request: Request) {
         return NextResponse.json({
             success: true,
             user: {
-                id: authUserId,
+                id: userId,
                 email: email
             }
         });
