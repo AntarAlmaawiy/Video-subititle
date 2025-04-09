@@ -44,6 +44,7 @@ export default function VideoLibraryPage() {
         remaining: 1
     });
     const [timeRemaining, setTimeRemaining] = useState<string>('');
+    const [dataFetched, setDataFetched] = useState(false);
 
     // Cache control - Define as a constant with useMemo to avoid recreation
     const lastFetchRef = useRef<number>(0);
@@ -70,9 +71,9 @@ export default function VideoLibraryPage() {
             try {
                 // Check cache validity
                 const now = Date.now();
-                const shouldRefetch = now - lastFetchRef.current > CACHE_DURATION || videos.length === 0;
+                const shouldRefetch = now - lastFetchRef.current > CACHE_DURATION || !dataFetched;
 
-                if (!shouldRefetch) {
+                if (!shouldRefetch && dataFetched) {
                     console.log("Using cached video data");
                     setLoading(false);
                     return;
@@ -113,22 +114,19 @@ export default function VideoLibraryPage() {
 
                 // Update cache timestamp
                 lastFetchRef.current = now;
+                setDataFetched(true);
 
             } catch (err: unknown) {
                 const errorMessage = err instanceof Error ? err.message : 'Failed to load your videos';
                 setError(errorMessage);
-
-                // Even if there's an error, we might still have partial data
-                if (videos.length > 0 && !selectedVideo) {
-                    setSelectedVideo(videos[0]);
-                }
+                setDataFetched(true); // Mark as fetched even on error to prevent infinite loading
             } finally {
                 setLoading(false);
             }
         };
 
         fetchData();
-    }, [session?.user?.id, selectedVideo, updateRemainingTime, videos, CACHE_DURATION]);
+    }, [session?.user?.id, dataFetched, updateRemainingTime, CACHE_DURATION]);
 
     // Set up timer interval for next upload time
     useEffect(() => {
@@ -191,7 +189,7 @@ export default function VideoLibraryPage() {
             await forceDownloadFile(video.file_path, video.file_name);
         } catch (err: unknown) {
             alert('Failed to download video: ' + (err instanceof Error ? err.message : 'An unexpected error occurred'));
-        }finally {
+        } finally {
             setIsDownloading(false);
         }
     }, []);
@@ -201,7 +199,7 @@ export default function VideoLibraryPage() {
         setSelectedVideo(video);
     }, []);
 
-    if (loading || status === "loading") {
+    if (status === "loading") {
         return (
             <div className="flex justify-center items-center h-64">
                 <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-indigo-500"></div>
@@ -223,7 +221,7 @@ export default function VideoLibraryPage() {
             </div>
 
             {/* Daily Limit Status */}
-            {uploadLimits && (
+            {uploadLimits && dataFetched && (
                 <div className="bg-white rounded-lg shadow p-4 mb-6">
                     <div className="flex items-center justify-between">
                         <div className="flex items-center">
@@ -268,16 +266,19 @@ export default function VideoLibraryPage() {
                 </div>
             )}
 
-            {!loading && videos.length === 0 && (
+            {!loading && dataFetched && videos.length === 0 && (
                 <div className="text-center py-10">
                     <p className="text-gray-500 mb-4">You don&#39;t have any processed videos yet.</p>
-                    <Link href="/subtitle-generator" className="bg-indigo-600 text-white px-4 py-2 rounded-md hover:bg-indigo-500">
+                    <Link
+                        href="/dashboard/subtitle-generator"
+                        className="bg-indigo-600 text-white px-4 py-2 rounded-md hover:bg-indigo-500"
+                    >
                         Generate Subtitles
                     </Link>
                 </div>
             )}
 
-            {!loading && videos.length > 0 && (
+            {!loading && dataFetched && videos.length > 0 && (
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                     {/* Left side: Video list */}
                     <div className="lg:col-span-1">
