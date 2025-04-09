@@ -1,4 +1,4 @@
-// app/signup/page.tsx - updated to use the API route
+// app/signup/page.tsx
 "use client";
 
 import { useState } from "react";
@@ -45,7 +45,7 @@ export default function SignUpPage() {
                 passwordLength: formData.password.length
             });
 
-            // Call our manual signup API
+            // Use our custom API route that uses admin credentials
             try {
                 const response = await fetch('/api/manual-signup', {
                     method: 'POST',
@@ -59,12 +59,13 @@ export default function SignUpPage() {
                     }),
                 });
 
-                const data = await response.json();
-
                 if (!response.ok) {
+                    const data = await response.json();
+                    console.error("Signup API error:", data);
                     throw new Error(data.error || 'Failed to create account');
                 }
 
+                const data = await response.json();
                 console.log("Sign up successful:", data);
                 setSuccess("Account created successfully!");
 

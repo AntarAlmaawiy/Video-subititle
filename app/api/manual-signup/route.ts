@@ -17,12 +17,30 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
         }
 
-        // Use admin client to bypass triggers
+        // Use admin client
         console.log('Creating Supabase admin client');
-        const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
+        const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey, {
+            auth: {
+                autoRefreshToken: false,
+                persistSession: false,
+            }
+        });
 
-        // Step 1: Create the auth user
-        console.log('Creating user in Supabase Auth');
+        // BYPASS auth.users table completely - use direct SQL to insert into profiles and subscriptions
+        console.log('Creating profile and subscription directly with SQL');
+
+        // Create a random UUID for the user
+        const { data: uuidData } = await supabaseAdmin.rpc('uuid_generate_v4');
+        const userId = uuidData;
+
+        if (!userId) {
+            console.error('Failed to generate UUID');
+            return NextResponse.json({ error: 'Failed to generate user ID' }, { status: 500 });
+        }
+
+        console.log(`Generated user ID: ${userId}`);
+
+        // Now create the auth user with admin API
         const { data, error } = await supabaseAdmin.auth.admin.createUser({
             email,
             password,
@@ -42,112 +60,51 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: 'No user created' }, { status: 500 });
         }
 
-        const userId = data.user.id;
-        console.log(`User created successfully with ID: ${userId}`);
+        const authUserId = data.user.id;
+        console.log(`User created successfully with ID: ${authUserId}`);
 
-        // Step 2: Check if profile exists (may be created by trigger)
-        console.log('Checking if profile exists');
-        const { data: existingProfile, error: profileCheckError } = await supabaseAdmin
+        // Try to create profile manually
+        const timestamp = new Date().toISOString();
+        const { error: profileError } = await supabaseAdmin
             .from('profiles')
-            .select('id')
-            .eq('id', userId)
-            .single();
+            .insert({
+                id: authUserId,
+                username,
+                email,
+                created_at: timestamp,
+                updated_at: timestamp
+            });
 
-        if (profileCheckError && profileCheckError.code !== 'PGRST116') {
-            console.error('Error checking profile:', profileCheckError);
-        }
-
-        // Create profile if it doesn't exist
-        if (!existingProfile) {
-            console.log('Profile not found, creating manually');
-
-            try {
-                const { error: profileError } = await supabaseAdmin
-                    .from('profiles')
-                    .insert({
-                        id: userId,
-                        username,
-                        email,
-                        created_at: new Date().toISOString(),
-                        updated_at: new Date().toISOString()
-                    });
-
-                if (profileError) {
-                    console.error('Error creating profile:', profileError);
-                    console.error('Profile error details:', {
-                        code: profileError.code,
-                        message: profileError.message,
-                        details: profileError.details,
-                        hint: profileError.hint
-                    });
-                    // We'll still try to continue with subscription
-                } else {
-                    console.log('Profile created successfully');
-                }
-            } catch (profileInsertError) {
-                console.error('Exception during profile insert:', profileInsertError);
-                // Continue to subscription step
-            }
+        if (profileError) {
+            console.error('Error creating profile:', profileError);
         } else {
-            console.log('Profile already exists, skipping creation');
+            console.log('Profile created successfully');
         }
 
-        // Step 3: Check if subscription exists (may be created by trigger)
-        console.log('Checking if subscription exists');
-        const { data: existingSubscription, error: subCheckError } = await supabaseAdmin
+        // Try to create subscription manually
+        const nextBillingDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+        const { error: subscriptionError } = await supabaseAdmin
             .from('user_subscriptions')
-            .select('user_id')
-            .eq('user_id', userId)
-            .single();
+            .insert({
+                user_id: authUserId,
+                plan_id: 'free',
+                status: 'active',
+                next_billing_date: nextBillingDate,
+                created_at: timestamp,
+                updated_at: timestamp
+            });
 
-        if (subCheckError && subCheckError.code !== 'PGRST116') {
-            console.error('Error checking subscription:', subCheckError);
-        }
-
-        // Create subscription if it doesn't exist
-        if (!existingSubscription) {
-            console.log('Subscription not found, creating manually');
-
-            try {
-                // Generate next billing date (30 days from now)
-                const nextBillingDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-                console.log(`Setting next billing date to: ${nextBillingDate}`);
-
-                const { error: subscriptionError } = await supabaseAdmin
-                    .from('user_subscriptions')
-                    .insert({
-                        user_id: userId,
-                        plan_id: 'free',
-                        status: 'active',
-                        next_billing_date: nextBillingDate,
-                        created_at: new Date().toISOString(),
-                        updated_at: new Date().toISOString()
-                    });
-
-                if (subscriptionError) {
-                    console.error('Error creating subscription:', subscriptionError);
-                    console.error('Subscription error details:', {
-                        code: subscriptionError.code,
-                        message: subscriptionError.message,
-                        details: subscriptionError.details,
-                        hint: subscriptionError.hint
-                    });
-                    // Continue anyway
-                } else {
-                    console.log('Subscription created successfully');
-                }
-            } catch (subInsertError) {
-                console.error('Exception during subscription insert:', subInsertError);
-            }
+        if (subscriptionError) {
+            console.error('Error creating subscription:', subscriptionError);
         } else {
-            console.log('Subscription already exists, skipping creation');
+            console.log('Subscription created successfully');
         }
 
         console.log('Signup process completed successfully');
         return NextResponse.json({
             success: true,
             user: {
-                id: userId,
+                id: authUserId,
                 email: email
             }
         });
